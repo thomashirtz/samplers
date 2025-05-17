@@ -10,12 +10,12 @@ class Operator(torch.nn.Module, ABC):
 
     Mandatory
     ---------
-    apply(x)  – forward map  y = A(x)
+    Operator(x)  – forward map  y = A(x)
 
     Optional
     --------
-    apply_transpose(y) – adjoint   x = Aᵀ(y)
-    apply_pinv(y)      – pseudo-inverse  x = A⁺(y)
+    Operator.T(y) – adjoint   x = Aᵀ(y)
+    Operator.pinv(y)      – pseudo-inverse  x = A⁺(y)
 
     Notes
     -----
@@ -23,15 +23,15 @@ class Operator(torch.nn.Module, ABC):
     """
 
     @abstractmethod
-    def apply(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """Forward map: y = A(x)"""
         pass
 
-    def apply_transpose(self, y: Tensor) -> Tensor:
+    def T(self, y: Tensor) -> Tensor:
         """Adjoint/transpose map: x = Aᵀ(y)."""
         raise NotImplementedError("Transpose not defined for this operator")
 
-    def apply_pinv(self, y: Tensor) -> Tensor:
+    def pinv(self, y: Tensor) -> Tensor:
         """Pseudo-inverse map: x = A⁺(y)."""
         raise NotImplementedError("Pseudo-inverse not defined for this operator")
 
@@ -42,12 +42,12 @@ class NonlinearOperator(Operator):
 
     Required
     --------
-    apply(x)  – forward map  y = A(x)
+    Operator(x)  – forward map  y = A(x)
 
     Optional
     --------
-    apply_transpose(y) – a Jacobian-transpose action, if available
-    apply_pinv(y)      – a (local) pseudo-inverse, if meaningful
+    Operator.T(y) – a Jacobian-transpose action, if available
+    Operator.pinv(y)      – a (local) pseudo-inverse, if meaningful
 
     Use this base when *A* is non-linear; the adjoint or pseudo-inverse may not
     exist in closed form.  Override the optional methods only if your model
@@ -55,5 +55,5 @@ class NonlinearOperator(Operator):
     """
 
     @abstractmethod
-    def apply(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         pass

@@ -9,15 +9,15 @@ from samplers.operators.abstract import Operator
 
 class LinearOperator(Operator):
     @abstractmethod
-    def apply(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         pass
 
     @abstractmethod
-    def apply_transpose(self, y: Tensor) -> Tensor:
+    def T(self, y: Tensor) -> Tensor:
         pass
 
     @abstractmethod
-    def apply_pinv(self, y: Tensor) -> Tensor:
+    def pinv(self, y: Tensor) -> Tensor:
         pass
 
 
@@ -56,7 +56,7 @@ class SVDOperator(LinearOperator):
     def shape(self) -> Tuple[int, int]:
         return self._m, self._n
 
-    def apply(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """
         Forward map:
         x: (..., n)
@@ -68,7 +68,7 @@ class SVDOperator(LinearOperator):
         #  see how I can integrate all the operator with a simple structure
         return proj @ self._u.T
 
-    def apply_transpose(self, y: Tensor) -> Tensor:
+    def T(self, y: Tensor) -> Tensor:
         """
         Adjoint map:
         y: (..., m)
@@ -78,7 +78,7 @@ class SVDOperator(LinearOperator):
         proj = (y @ self._u) * self._s
         return proj @ self._vh
 
-    def apply_pinv(self, y: Tensor) -> Tensor:
+    def pinv(self, y: Tensor) -> Tensor:
         """
         Pseudo-inverse map:
         y: (..., m)
@@ -87,9 +87,6 @@ class SVDOperator(LinearOperator):
         inv_s = torch.where(self._s > 0, 1.0 / self._s, torch.zeros_like(self._s))
         proj = (y @ self._u) * inv_s
         return proj @ self._vh
-
-    __matmul__ = apply
-    forward = apply
 
     @classmethod
     def from_matrix(cls, H: Tensor, full_matrices: bool = False) -> "SVDOperator":
