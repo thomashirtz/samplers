@@ -1,6 +1,7 @@
+from abc import ABC, abstractmethod
+
 import torch
 from torch import Tensor
-from abc import ABC, abstractmethod
 
 
 class Operator(torch.nn.Module, ABC):

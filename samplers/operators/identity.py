@@ -1,5 +1,7 @@
-from samplers.operators.linear import LinearOperator
 from torch import Tensor
+
+from samplers.operators.linear import LinearOperator
+
 
 class IdentityOperator(LinearOperator):
     def __init__(self, input_shape: tuple[int, ...]):
