@@ -21,7 +21,6 @@ class LinearOperator(Operator):
         pass
 
 
-
 class SVDOperator(LinearOperator):
     """
     Linear operator defined via SVD: H = U @ diag(s) @ Vh.
@@ -64,7 +63,9 @@ class SVDOperator(LinearOperator):
         Hx = U @ diag(s) @ Vh @ x
            = ((x @ Vh.T) * s) @ U.T
         """
-        proj = (x @ self._vh.T) * self._s # fixme those implementation might change in the future, I want to keep it clean for now and see how I can integrate all the operator with a simple structure
+        proj = (x @ self._vh.T) * self._s
+        # fixme those implementation might change in the future, I want to keep it clean for now and
+        #  see how I can integrate all the operator with a simple structure
         return proj @ self._u.T
 
     def apply_transpose(self, y: Tensor) -> Tensor:
@@ -88,10 +89,10 @@ class SVDOperator(LinearOperator):
         return proj @ self._vh
 
     __matmul__ = apply
-    forward    = apply
+    forward = apply
 
     @classmethod
-    def from_matrix(cls, H: Tensor, full_matrices: bool=False):
+    def from_matrix(cls, H: Tensor, full_matrices: bool = False) -> "SVDOperator":
         """
         Factory method: compute thin SVD using torch.linalg.svd and return operator.
         """
@@ -99,10 +100,10 @@ class SVDOperator(LinearOperator):
         return cls(u, s, vh)
 
     @staticmethod
-    def _check_shapes(u, s, vh):
-        if u.dim()!=2 or vh.dim()!=2 or s.dim()!=1:
+    def _check_shapes(u: Tensor, s: Tensor, vh: Tensor) -> None:
+        if u.dim() != 2 or vh.dim() != 2 or s.dim() != 1:
             raise ValueError("u,vh must be 2-D, s must be 1-D")
         m, k1 = u.shape
         k2, n = vh.shape
-        if k1!=k2 or k1!=s.numel():
+        if k1 != k2 or k1 != s.numel():
             raise ValueError(f"Shape mismatch: U{u.shape}, S{s.shape}, Vh{vh.shape}")
