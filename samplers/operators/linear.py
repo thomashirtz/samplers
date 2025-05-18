@@ -64,8 +64,6 @@ class SVDOperator(LinearOperator):
            = ((x @ Vh.T) * s) @ U.T
         """
         proj = (x @ self._vh.T) * self._s
-        # fixme those implementation might change in the future, I want to keep it clean for now and
-        #  see how I can integrate all the operator with a simple structure
         return proj @ self._u.T
 
     def T(self, y: Tensor) -> Tensor:
