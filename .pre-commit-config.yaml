@@ -33,7 +33,7 @@ repos:
         args: ["--ignore-missing-imports"]
 
   - repo: https://github.com/PyCQA/docformatter
-    rev: v1.7.7  # Or the latest version
+    rev: v1.7.7
     hooks:
       - id: docformatter
         language_version: python3.12
