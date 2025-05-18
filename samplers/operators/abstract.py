@@ -5,8 +5,7 @@ from torch import Tensor
 
 
 class Operator(torch.nn.Module, ABC):
-    """
-    Generic forward model *A* for inverse problems.
+    """Generic forward model *A* for inverse problems.
 
     Mandatory
     ---------
@@ -37,8 +36,7 @@ class Operator(torch.nn.Module, ABC):
 
 
 class NonlinearOperator(Operator):
-    """
-    Non-linear degradation operator.
+    """Non-linear degradation operator.
 
     Required
     --------
