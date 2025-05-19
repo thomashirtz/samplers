@@ -5,19 +5,20 @@ import torch
 from torch import Tensor
 
 from samplers.operators.abstract import Operator
+from samplers.utils import pad_zeros
 
 
 class LinearOperator(Operator):
     @abstractmethod
-    def forward(self, x: Tensor) -> Tensor:
+    def apply(self, x: Tensor) -> Tensor:
         pass
 
     @abstractmethod
-    def T(self, y: Tensor) -> Tensor:
+    def apply_transpose(self, y: Tensor) -> Tensor:
         pass
 
     @abstractmethod
-    def pinv(self, y: Tensor) -> Tensor:
+    def apply_pseudo_inverse(self, y: Tensor) -> Tensor:
         pass
 
 
@@ -35,70 +36,91 @@ class SVDOperator(LinearOperator):
     -----
     • U, s, and Vh are registered as *buffers*, not *parameters*.
     • Implements:
-        apply(x)           – Hx
+        apply(x) – Hx
         apply_transpose(y) – Hᵀy
-        apply_pinv(y)      – H⁺y
-        __matmul__         – H @ x (alias of apply)
+        apply_pseudo_inverse(y) – H⁺y
     """
-
-    def __init__(self, u: Tensor, s: Tensor, vh: Tensor) -> None:
-        super().__init__()
-        self._check_shapes(u, s, vh)
-
-        self.register_buffer("_u", u)
-        self.register_buffer("_s", s)
-        self.register_buffer("_vh", vh)
-
-        self._m, self._k = u.shape
-        self._n = vh.shape[1]
 
     @property
     def shape(self) -> Tuple[int, int]:
+        """Returns ``(m, n)`` – *output* and *input* dimensions."""
+        raise NotImplementedError
+
+    # ---- Low‑level factor products ------------------------------------
+    def apply_U(self, x: Tensor) -> Tensor:  # noqa: D401
+        """Computes ``U · x`` where ``U`` has shape ``(m, k)`` and ``x`` is
+        ``(..., k)``."""
+        raise NotImplementedError
+
+    def apply_U_transpose(self, x: Tensor) -> Tensor:  # noqa: D401
+        """Computes ``Uᵀ · x``  with ``x`` of shape ``(..., m)`` → ``(...,
+        k)``."""
+        raise NotImplementedError
+
+    def apply_V(self, x: Tensor) -> Tensor:  # noqa: D401
+        """Computes ``V · x`` where ``V`` is ``(n, k)`` and ``x`` is ``(...,
+        k)`` → ``(..., n)``."""
+        raise NotImplementedError
+
+    def apply_V_transpose(self, x: Tensor) -> Tensor:  # noqa: D401
+        """Computes ``Vᵀ · x`` with ``x`` of shape ``(..., n)`` → ``(...,
+        k)``."""
+        raise NotImplementedError
+
+    def get_singular_values(self) -> Tensor:  # noqa: D401
+        """Returns the 1‑D spectrum ``s`` (shape ``(k,)``)."""
+        raise NotImplementedError
+
+    def apply(self, x: Tensor) -> Tensor:  # noqa: D401
+        """Computes *Hx* via factor products (no need for sub‑class
+        override)."""
+        z = self.apply_V_transpose(x)  # (..., k)
+        s = self.get_singular_values()  # (k,)
+        z = z * s  # (..., k)
+        return self.apply_U(z)  # (..., m)
+
+    def apply_transpose(self, y: Tensor) -> Tensor:  # noqa: D401
+        """Computes *Hᵀy* via factor products."""
+        z = self.apply_U_transpose(y)  # (..., k)
+        s = self.get_singular_values()
+        z = z * s  # (..., k)
+        n = self.shape[1]
+        return self.apply_V(pad_zeros(z, n))  # (..., n)
+
+    def apply_pseudo_inverse(self, y: Tensor) -> Tensor:  # noqa: D401
+        """Computes the Moore–Penrose pseudo‑inverse product *H⁺y*."""
+        z = self.apply_U_transpose(y)  # (..., k)
+        s = self.get_singular_values()
+        inv_s = torch.where(s == 0, torch.zeros_like(s), 1.0 / s)
+        z = z * inv_s  # (..., k)
+        n = self.shape[1]
+        return self.apply_V(pad_zeros(z, n))  # (..., n)
+
+
+class GeneralSVDOperator(SVDOperator):
+    def __init__(self, U, s, Vh):
+        super().__init__()
+        self._m, self._n = U.shape[0], Vh.shape[1]
+        self.register_buffer("_U", U)
+        self.register_buffer("_singular_values", s)
+        self.register_buffer("_V_transpose", Vh)
+
+    def apply_U(self, x):
+        return x @ self._U.t()
+
+    def apply_U_transpose(self, x):
+        return x @ self._U
+
+    def apply_V(self, x: Tensor) -> Tensor:  # x : (..., k)
+        return x @ self._V_transpose  # (..., n)
+
+    def apply_V_transpose(self, x: Tensor) -> Tensor:  # x : (..., n)
+        return x @ self._V_transpose.t()  # (..., k)
+
+    def get_singular_values(self):
+        return self._singular_values
+
+    @property
+    def shape(self) -> Tuple[int, int]:
+        """Output dimension m, input dimension n."""
         return self._m, self._n
-
-    def forward(self, x: Tensor) -> Tensor:
-        """
-        Forward map:
-        x: (..., n)
-        Hx = U @ diag(s) @ Vh @ x
-           = ((x @ Vh.T) * s) @ U.T
-        """
-        proj = (x @ self._vh.T) * self._s
-        return proj @ self._u.T
-
-    def T(self, y: Tensor) -> Tensor:
-        """
-        Adjoint map:
-        y: (..., m)
-        Hᵀy = V @ diag(s) @ Uᵀ @ y
-           = ((y @ self._u) * s) @ Vh
-        """
-        proj = (y @ self._u) * self._s
-        return proj @ self._vh
-
-    def pinv(self, y: Tensor) -> Tensor:
-        """
-        Pseudo-inverse map:
-        y: (..., m)
-        H⁺y = V @ diag(1/s) @ Uᵀ @ y  (zeros handled via inv_s mask)
-        """
-        inv_s = torch.where(self._s > 0, 1.0 / self._s, torch.zeros_like(self._s))
-        proj = (y @ self._u) * inv_s
-        return proj @ self._vh
-
-    @classmethod
-    def from_matrix(cls, H: Tensor, full_matrices: bool = False) -> "SVDOperator":
-        """
-        Factory method: compute thin SVD using torch.linalg.svd and return operator.
-        """
-        u, s, vh = torch.linalg.svd(H, full_matrices=full_matrices)
-        return cls(u, s, vh)
-
-    @staticmethod
-    def _check_shapes(u: Tensor, s: Tensor, vh: Tensor) -> None:
-        if u.dim() != 2 or vh.dim() != 2 or s.dim() != 1:
-            raise ValueError("u,vh must be 2-D, s must be 1-D")
-        m, k1 = u.shape
-        k2, n = vh.shape
-        if k1 != k2 or k1 != s.numel():
-            raise ValueError(f"Shape mismatch: U{u.shape}, S{s.shape}, Vh{vh.shape}")

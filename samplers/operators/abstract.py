@@ -22,17 +22,20 @@ class Operator(torch.nn.Module, ABC):
     """
 
     @abstractmethod
-    def forward(self, x: Tensor) -> Tensor:
+    def apply(self, x: Tensor) -> Tensor:
         """Forward map: y = A(x)"""
         pass
 
-    def T(self, y: Tensor) -> Tensor:
+    def apply_transpose(self, y: Tensor) -> Tensor:
         """Adjoint/transpose map: x = Aᵀ(y)."""
         raise NotImplementedError("Transpose not defined for this operator")
 
-    def pinv(self, y: Tensor) -> Tensor:
+    def apply_pseudo_inverse(self, y: Tensor) -> Tensor:
         """Pseudo-inverse map: x = A⁺(y)."""
         raise NotImplementedError("Pseudo-inverse not defined for this operator")
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.apply(x)
 
 
 class NonlinearOperator(Operator):
@@ -53,5 +56,5 @@ class NonlinearOperator(Operator):
     """
 
     @abstractmethod
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def apply(self, x: torch.Tensor) -> torch.Tensor:
         pass
