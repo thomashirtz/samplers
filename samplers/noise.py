@@ -21,7 +21,6 @@ Public API
 
 If *dtype* is omitted in `sample`, the tensor follows the dtype of the internal
 buffer (σ or λ), preserving mixed-precision semantics.
-
 """
 
 from abc import ABC, abstractmethod
@@ -30,6 +29,7 @@ import torch
 from torch import Tensor, nn
 
 from samplers.dtypes import RNG, Device, DType, Shape
+from samplers.utils.tensor import validate_tensor_is_scalar
 
 
 class NoiseModel(nn.Module, ABC):
@@ -39,7 +39,7 @@ class NoiseModel(nn.Module, ABC):
     def log_prob(self, residual: Tensor) -> Tensor: ...
 
     def score(self, residual: Tensor) -> Tensor:
-        """∇ log p(residual).
+        """∇ log p(residual).
 
         Override in subclasses if a closed form is cheaper.
         """
@@ -58,21 +58,42 @@ class NoiseModel(nn.Module, ABC):
         generator: RNG = None,
     ) -> Tensor: ...
 
+    @property
+    def device(self) -> torch.device:
+        return next(self.buffers()).device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return next(self.buffers()).dtype
+
 
 class GaussianNoise(NoiseModel):
     """Independent Gaussian noise ε ~ 𝒩(0, σ²)."""
 
     sigma: Tensor  # registered buffer
 
-    def __init__(self, sigma: float | Tensor) -> None:
-        """
-        Parameters
-        ----------
-        sigma
-            Standard deviation σ (shared across dimensions).
-        """
+    def __init__(
+        self,
+        sigma: float | Tensor,
+        *,
+        device: Device | None = None,
+        dtype: DType = None,
+    ) -> None:
         super().__init__()
-        sigma_tensor = torch.as_tensor(float(sigma), dtype=torch.float32)
+
+        if isinstance(sigma, Tensor):
+            validate_tensor_is_scalar(sigma, "sigma")
+            sigma_tensor = sigma.detach().clone()
+        else:
+            sigma_tensor = torch.tensor(
+                float(sigma),
+                device=device,
+                dtype=dtype or torch.float32,
+            )
+
+        if torch.any(sigma_tensor <= 0):
+            raise ValueError("σ must be positive.")
+
         self.register_buffer("sigma", sigma_tensor)
 
     # --------------------------------------------------------------------- #
