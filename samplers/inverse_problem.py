@@ -25,16 +25,6 @@ class InverseProblem:
 
     @classmethod
     def from_observation(cls, obs: Tensor, *, operator: Operator, noise: NoiseModel):
-        # fixme I noticed that sometime the operator needs to know the shape, so it can be nice to have this
-        #  way of initializing the inp, however maybe there is an issue to obtain the original size if we have only
-        #  the observation, I was trying to avoid the user to have to give shape manually but maybe we can't avoid this
-        # 1) if operator doesn’t know its input shape, ask it to deduce it
-        # if operator.input_shape is None:
-        #     operator.input_shape = operator.infer_input_shape_from_obs(obs)
-        # 2) still missing output_shape? we can compute that now
-        # if operator.output_shape is None:
-        #     operator.output_shape = operator.infer_output_shape(operator.input_shape)
-
         return cls(operator=operator, observation=obs, noise=noise)
 
     @classmethod
@@ -56,13 +46,6 @@ class InverseProblem:
         noise    : any `NoiseModel`    (ε distribution)
         rng      : optional torch.Generator for reproducible noise draws.
         """
-        # 1) Make operator remember shapes, if it hasn't already
-        if operator.input_shape is None:
-            operator.input_shape = x_true.shape[1:]
-        if operator.output_shape is None:
-            operator.output_shape = operator.infer_output_shape(operator.input_shape)
-
-        # 2) Generate synthetic measurement
         with torch.no_grad():
             y_clean = operator(x_true)
             eps = noise.sample(operator.output_shape)  # ε

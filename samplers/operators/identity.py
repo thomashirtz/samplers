@@ -1,5 +1,6 @@
 import torch
-from torch import Tensor
+
+from samplers.dtypes import Shape, Tensor
 
 from .linear import LinearOperator
 
@@ -19,27 +20,37 @@ class IdentityOperator(LinearOperator):
 
 class FlattenIdentityOperator(LinearOperator):
     """Y = x.reshape(batch, -1)                – flattens each sample x =
-    y.reshape(batch, *original_shape)   – inverse / adjoint.
+    y.reshape(batch, *original_shape)  – inverse / adjoint.
 
     Parameters
     ----------
-    input_shape : tuple[int, ...]
+    x_shape : tuple[int, ...]
         The *per-sample* shape to be flattened and later restored,
         e.g. (3, 64, 64) for RGB images.
     """
 
-    def __init__(self, input_shape: tuple[int, ...]):
-        super().__init__()
-        self._shape = tuple(input_shape)
-        self._flat_dim = int(torch.prod(torch.tensor(self._shape)).item())
+    def __init__(self, x_shape: Shape) -> None:
+        super().__init__(x_shape=x_shape)
+        # total number of features per sample
+        self.y_shape = (int(torch.tensor(self.x_shape).prod().item()),)
 
     def apply(self, x: Tensor) -> Tensor:
-        # H(x) : (B,*shape) → (B,F)
-        return x.reshape(x.shape[0], self._flat_dim)
+        """Flatten the *sample* dimensions of x into one:
+
+        input shape:  (..., *x_shape)
+        output shape: (..., flat_dim)
+        """
+        batch_dims = x.shape[: -len(self.x_shape)]
+        return x.reshape(*batch_dims, *self.y_shape)
 
     def apply_transpose(self, y: Tensor) -> Tensor:
-        # Hᵀ(y) : (B,F) → (B,*shape)
-        return y.reshape((y.shape[0],) + self._shape)
+        """
+        Restore flattened samples back to x_shape:
+          input shape:  (..., flat_dim)
+          output shape: (..., *x_shape)
+        """
+        batch_dims = y.shape[:-1]
+        return y.reshape(*batch_dims, *self.x_shape)
 
-    # For the identity operator the pseudo-inverse equals the transpose.
+    # pseudo-inverse of a flatten is the same as its transpose
     apply_pseudo_inverse = apply_transpose
