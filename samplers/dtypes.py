@@ -7,7 +7,7 @@ from torch import Tensor  # noqa
 Shape: TypeAlias = Sequence[int] | torch.Size
 
 # Anything accepted by `.to(device=...)` or `tensor.to(device=...)`.
-Device: TypeAlias = torch.device | str
+Device: TypeAlias = torch.device | str | None
 
 # A concrete torch dtype OR `None` (leave dtype unchanged).
 DType: TypeAlias = torch.dtype | None
