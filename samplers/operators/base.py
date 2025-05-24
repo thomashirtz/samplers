@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 
 import torch
-from torch import Tensor
+
+from samplers.dtypes import Shape, Tensor
 
 
 class Operator(torch.nn.Module, ABC):
@@ -21,6 +22,13 @@ class Operator(torch.nn.Module, ABC):
     • Store long-lived tensors as *buffers* so they move with `.to()`.
     """
 
+    def __init__(self, x_shape: Shape) -> None:
+        super().__init__()
+        self.x_shape = tuple(x_shape)  # todo still hesitating between input_shape and x_shape
+        self.y_shape = self._infer_y_shape(
+            self.x_shape
+        )  # todo still hesitating between input_shape and y_shape
+
     @abstractmethod
     def apply(self, x: Tensor) -> Tensor:
         """Forward map: y = A(x)"""
@@ -36,6 +44,13 @@ class Operator(torch.nn.Module, ABC):
 
     def forward(self, x: Tensor) -> Tensor:
         return self.apply(x)
+
+    def _infer_y_shape(self, x_shape: Shape) -> Shape:
+        """Run a dummy batch-size-1 through `apply` to get y.shape[1:]."""
+        dummy = torch.zeros((1, *x_shape), dtype=torch.float32)
+        dummy = dummy.to(next(self.parameters(), torch.tensor([])).device)
+        y = self.apply(dummy)
+        return tuple(y.shape[1:])
 
 
 class NonlinearOperator(Operator):
@@ -56,5 +71,5 @@ class NonlinearOperator(Operator):
     """
 
     @abstractmethod
-    def apply(self, x: torch.Tensor) -> torch.Tensor:
+    def apply(self, x: Tensor) -> Tensor:
         pass

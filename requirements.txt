@@ -1,2 +1,6 @@
+accelerate
+diffusers
 pytest
 torch
+tqdm
+transformers

@@ -12,3 +12,8 @@ def pad_zeros(x: Tensor, target_last_dim: int) -> Tensor:
     pad_len = target_last_dim - x.shape[-1]
     pad = torch.zeros_like(x[..., :pad_len])
     return torch.cat([x, pad], dim=-1)
+
+
+def validate_tensor_is_scalar(t: Tensor, name: str) -> None:
+    if t.ndim != 0:
+        raise ValueError(f"`{name}` must be a scalar (0-D tensor).")
