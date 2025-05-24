@@ -1,28 +1,3 @@
-"""
-noise.py  ·  Generic and concrete noise models for inverse problems
--------------------------------------------------------------------
-
-Each noise model is an `nn.Module`, so
-
-* `.to(device, dtype)` migrates all internal buffers
-* `state_dict()` / `load_state_dict()` work automatically
-* they can be nested inside other modules (samplers, operators, …)
-
-Implemented laws
-----------------
-• `GaussianNoise(σ)`   – i.i.d. 𝒩(0, σ²)
-• `PoissonNoise(λ)`    – ε = k − λ with k ~ Pois(λ)
-
-Public API
-----------
-`log_prob(r)`   → log pₑ(r)
-`score(r)`      → ∇ᵣ log pₑ(r) (autograd fallback)
-`sample(shape)` → ε ∼ pₑ
-
-If *dtype* is omitted in `sample`, the tensor follows the dtype of the internal
-buffer (σ or λ), preserving mixed-precision semantics.
-"""
-
 from abc import ABC, abstractmethod
 
 import torch
