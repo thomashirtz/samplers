@@ -26,10 +26,13 @@ buffer (σ or λ), preserving mixed-precision semantics.
 from abc import ABC, abstractmethod
 
 import torch
-from torch import Tensor, nn
+from torch import nn
 
-from samplers.dtypes import RNG, Device, DType, Shape
+from samplers.dtypes import RNG, Device, DType, Shape, Tensor
 from samplers.utils.tensor import validate_tensor_is_scalar
+
+# fixme I did a lot of back and forth with this file, I want it to be a little bit like the reference about how
+#  to handle dtype, device etc. Please let me know if there are anything that you don't like.
 
 
 class NoiseModel(nn.Module, ABC):
@@ -76,7 +79,7 @@ class GaussianNoise(NoiseModel):
         self,
         sigma: float | Tensor,
         *,
-        device: Device | None = None,
+        device: Device = None,
         dtype: DType = None,
     ) -> None:
         super().__init__()
@@ -96,21 +99,15 @@ class GaussianNoise(NoiseModel):
 
         self.register_buffer("sigma", sigma_tensor)
 
-    # --------------------------------------------------------------------- #
-    # log-likelihood
-    # --------------------------------------------------------------------- #
     def log_prob(self, r: Tensor) -> Tensor:
         var = self.sigma.pow(2)
         return -(r.square().sum(dim=tuple(range(1, r.ndim)))) / (2 * var)
 
-    # --------------------------------------------------------------------- #
-    # sampling
-    # --------------------------------------------------------------------- #
     def sample(
         self,
         shape: Shape,
         *,
-        device: Device | None = None,
+        device: Device = None,
         dtype: DType = None,
         generator: RNG = None,
     ) -> Tensor:
@@ -120,49 +117,41 @@ class GaussianNoise(NoiseModel):
         return eps * self.sigma.to(dtype)
 
 
-# --------------------------------------------------------------------------- #
-# Poisson ε = k − λ,   k ~ Poisson(λ)
-# --------------------------------------------------------------------------- #
-
-
 class PoissonNoise(NoiseModel):
-    """Discrete Poisson counting noise.
+    """Discrete Poisson noise: ε = k − λ with k ~ Pois(λ)."""
 
-    Natural residual   ε = k − λ with E[ε]=0, Var[ε]=λ.
-    """
+    rate: Tensor
 
-    rate: Tensor  # registered buffer
-
-    # --------------------------------------------------------------------- #
-    # Construction
-    # --------------------------------------------------------------------- #
-    def __init__(self, rate: float | Tensor) -> None:
-        """
-        Parameters
-        ----------
-        rate
-            Poisson intensity λ (> 0).
-        """
+    def __init__(
+        self,
+        rate: float | Tensor,
+        *,
+        device: Device | None = None,
+        dtype: DType = None,
+    ) -> None:
         super().__init__()
-        rate_tensor = torch.as_tensor(float(rate), dtype=torch.float32)
-        if torch.any(rate_tensor <= 0):
-            raise ValueError("Poisson rate λ must be positive.")
+        if isinstance(rate, Tensor):
+            validate_tensor_is_scalar(rate, "rate")
+            rate_tensor = rate.detach().clone()
+        else:
+            rate_tensor = torch.tensor(
+                float(rate),
+                device=device,
+                dtype=dtype or torch.float32,
+            )
+        if rate_tensor <= 0:
+            raise ValueError("λ (rate) must be positive.")
         self.register_buffer("rate", rate_tensor)
 
-    # --------------------------------------------------------------------- #
-    # log-likelihood  (Gaussian approximation form)
-    # --------------------------------------------------------------------- #
     def log_prob(self, r: Tensor) -> Tensor:
+        # Gaussian-style approximation: Var=λ
         return -(r.pow(2) / (self.rate + 1e-3)).sum(dim=tuple(range(1, r.ndim)))
 
-    # --------------------------------------------------------------------- #
-    # sampling  – exact Poisson counts centred to zero mean
-    # --------------------------------------------------------------------- #
     def sample(
         self,
         shape: Shape,
         *,
-        device: Device | None = None,
+        device: Device = None,
         dtype: DType = None,
         generator: RNG = None,
     ) -> Tensor:
@@ -172,7 +161,3 @@ class PoissonNoise(NoiseModel):
         lam = torch.full(shape, self.rate.item(), device=device, dtype=dtype)
         k = torch.poisson(lam, generator=generator)
         return k - lam
-
-        # --- Gaussian approximation (uncomment to use) ------------------ #
-        # eps = torch.randn(shape, device=device, dtype=dtype, generator=generator)
-        # return eps * self.rate.sqrt().to(dtype)
