@@ -8,17 +8,13 @@ from samplers.samplers.utilities import ddim_step
 
 
 class DPSSampler(PosteriorSampler):
+    # todo give the possibility to give the initial noise, or not,
     def __call__(
         self,
         initial_noise: torch.Tensor,
         inverse_problem: InverseProblem,
-        epsilon_net: Network,
         gamma: float = 1.0,
         eta: float = 1.0,
-        noise_type: str = "gaussian",
-        poisson_rate: float = 1e-1,
-        display_im: bool = False,
-        display_freq: int = 20,
     ) -> Tensor:
         """DPS algorithm as described in [1].
 
