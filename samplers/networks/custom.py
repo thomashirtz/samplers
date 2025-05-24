@@ -1,8 +1,10 @@
-from samplers.models.custom import CustomModel
-from samplers.networks.base import Network
+from abc import ABC
+
+from samplers.models import CustomModel
+from samplers.networks import Network
 
 
-class CustomNetwork(Network):
+class CustomNetwork(Network, ABC):
     def __init__(self, model: CustomModel):
         model = model.requires_grad_(False)
         self.model = model.eval()

@@ -2,7 +2,7 @@ import torch
 from diffusers import DDPMPipeline
 from torch import Tensor
 
-from samplers.networks.base import Network
+from samplers.networks import Network
 
 
 class HuggingFaceNetwork(Network):
