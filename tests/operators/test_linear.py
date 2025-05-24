@@ -2,7 +2,7 @@ import pytest
 import torch
 from torch.testing import assert_close
 
-from samplers.operators.linear import GeneralSVDOperator
+from samplers.problems.operators.linear import GeneralSVDOperator
 
 
 @pytest.fixture(scope="module")

@@ -4,7 +4,7 @@ from typing import Tuple
 import torch
 from torch import Tensor
 
-from samplers.operators.abstract import Operator
+from samplers.operators import Operator
 from samplers.utils import pad_zeros
 
 
