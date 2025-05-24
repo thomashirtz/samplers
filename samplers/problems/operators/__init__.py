@@ -1,4 +1,4 @@
-from .abstract import NonlinearOperator, Operator
+from .base import NonlinearOperator, Operator
 from .identity import IdentityOperator
 from .linear import GeneralSVDOperator, LinearOperator, SVDOperator
 

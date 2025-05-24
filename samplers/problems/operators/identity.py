@@ -1,6 +1,6 @@
 from torch import Tensor
 
-from samplers.problems.operators.linear import LinearOperator
+from .linear import LinearOperator
 
 
 class IdentityOperator(LinearOperator):
