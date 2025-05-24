@@ -14,7 +14,7 @@ if __name__ == "__main__":
     model_id = "google/ddpm-celebahq-256"
     ddpm_pipeline = DDPMPipeline.from_pretrained(model_id, cache_dir=MODELS_DIRECTORY, dtype=dtype)
 
-    data = torch.ones((3, 128, 128), dtype=dtype)
+    data = torch.ones((3, 256, 256), dtype=dtype)
     operator = IdentityOperator()
     noise = GaussianNoise(sigma=0.05)
 
