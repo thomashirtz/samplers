@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
 import torch
-from torch import Tensor
 
+from samplers.dtypes import RNG, Tensor
 from samplers.noise import NoiseModel
 from samplers.operators import Operator
 
@@ -12,7 +12,7 @@ class InverseProblem:
     operator: Operator
     observation: Tensor
     noise: NoiseModel
-    latent_shape: tuple[int, ...]  # always set, never None
+    # latent_shape: tuple[int, ...]  # always set, never None
 
     def residual(self, x: Tensor) -> Tensor:
         return self.observation - self.operator(x)
@@ -25,16 +25,17 @@ class InverseProblem:
 
     @classmethod
     def from_observation(cls, obs: Tensor, *, operator: Operator, noise: NoiseModel):
+        # fixme I noticed that sometime the operator needs to know the shape, so it can be nice to have this
+        #  way of initializing the inp, however maybe there is an issue to obtain the original size if we have only
+        #  the observation, I was trying to avoid the user to have to give shape manually but maybe we can't avoid this
         # 1) if operator doesn’t know its input shape, ask it to deduce it
-        if operator.input_shape is None:
-            operator.input_shape = operator.infer_input_shape_from_obs(obs)
+        # if operator.input_shape is None:
+        #     operator.input_shape = operator.infer_input_shape_from_obs(obs)
         # 2) still missing output_shape? we can compute that now
-        if operator.output_shape is None:
-            operator.output_shape = operator.infer_output_shape(operator.input_shape)
+        # if operator.output_shape is None:
+        #     operator.output_shape = operator.infer_output_shape(operator.input_shape)
 
-        return cls(
-            operator=operator, observation=obs, noise=noise, latent_shape=operator.input_shape
-        )
+        return cls(operator=operator, observation=obs, noise=noise)
 
     @classmethod
     def from_clean_data(
@@ -43,7 +44,7 @@ class InverseProblem:
         *,
         operator: Operator,
         noise: NoiseModel,
-        rng: torch.Generator | None = None,
+        rng: RNG = None,
     ) -> "InverseProblem":
         """Build an `InverseProblem` by *simulating* the observation: y =
         H(x_true) + ε,   ε ~ noise.sample.
@@ -75,5 +76,4 @@ class InverseProblem:
             operator=operator,
             observation=y_obs,
             noise=noise,
-            latent_shape=operator.input_shape,
         )
