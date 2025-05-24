@@ -1,5 +1,5 @@
 from .base import NonlinearOperator, Operator
-from .identity import IdentityOperator
+from .identity import FlattenIdentityOperator, IdentityOperator
 from .linear import GeneralSVDOperator, LinearOperator, SVDOperator
 
 __all__ = [
@@ -9,4 +9,5 @@ __all__ = [
     "LinearOperator",
     "GeneralSVDOperator",
     "SVDOperator",
+    "FlattenIdentityOperator",
 ]
