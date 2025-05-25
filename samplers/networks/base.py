@@ -6,20 +6,20 @@ from torch import Tensor
 
 class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
 
-    def __init__(self, alpha_cumprods: Tensor, timesteps: Tensor):
+    def __init__(self, alphas_cumprod: Tensor):
         super().__init__()
-        self.register_buffer("alphas_cumprod", alpha_cumprods)
-        self.register_buffer("timesteps", timesteps)
-        # todo I am trying to find a way to remove timestep from the initialization of the network
-        #  because I want it only when doing sampler.__call__, for now I'll keep it as is.
+        alphas_cumprod = alphas_cumprod.clip(1e-6, 1)
+        self.register_buffer("alphas_cumprod", alphas_cumprod)
+        # double-precision schedule (for numerically sensitive stats)
+        # self.register_buffer("alphas_cumprod_f64", alphas_cumprod.clone().double())
+        # it was used in samplers.samplers.utilities.bridge_kernel_statistics, but I would prefer to keep network lean.
+        self.register_buffer("timesteps", tensor=None, persistent=False)
 
     @abstractmethod
-    def model(self, x: Tensor, t: Tensor) -> Tensor:  # noqa: N802
-        """Concrete network implementation (UNet, MLP, …)."""
-        raise NotImplementedError
+    def forward(self, x: Tensor, t: Tensor): ...
 
-    def forward(self, x: Tensor, t: Tensor):
-        return self.model(x=x, t=t)
+    @abstractmethod
+    def set_timesteps(self, num_sampling_steps: int): ...
 
     def predict_x0(self, x: Tensor, t: Tensor):
         acp_t = self.alphas_cumprod[t] / self.alphas_cumprod[self.timesteps[0].int()]
@@ -28,6 +28,14 @@ class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
     def score(self, x: Tensor, t: Tensor):
         acp_t = self.alphas_cumprod[t] / self.alphas_cumprod[self.timesteps[0]]
         return -self.forward(x, t) / (1 - acp_t) ** 0.5
+
+    @property
+    def device(self) -> torch.device:
+        return self.alphas_cumprod.device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return self.alphas_cumprod.dtype
 
 
 class LatentNetwork(torch.nn.Module, ABC):

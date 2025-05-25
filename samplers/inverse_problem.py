@@ -48,11 +48,12 @@ class InverseProblem:
         """
         with torch.no_grad():
             y_clean = operator(x_true)
-            eps = noise.sample(operator.output_shape)  # ε
-            if rng is not None:
-                eps = eps.clone().to(x_true.device)
-                torch.randn_like(eps, generator=rng, out=eps)  # reproducible
-                eps.mul_(noise.sigma if hasattr(noise, "sigma") else 1)
+            eps = noise.sample(
+                shape=y_clean.shape,
+                device=y_clean.device,
+                dtype=y_clean.dtype,
+                generator=rng,
+            )
             y_obs = y_clean + eps
 
         return cls(

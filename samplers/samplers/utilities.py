@@ -14,23 +14,27 @@ def bridge_kernel_statistics(
     eta: float = 1.0,
 ):
     """S < t < ell."""
-    f8 = torch.float64
+    dtype = x_ell.dtype
+    # todo fix the dtype, I think it is a little bit shady right now
+    # todo maybe give a dtype_computation and dtype_output if dtype output is none it takes the one of x_ell
+    # todo is it really necessary the float64 ?
+    # fixme also I tried to avoid having a cumprod f64 in the network to clean it but to see if it is a good idea
 
-    alpha_cum_s_to_t = epsilon_net.acp_f8[t] / epsilon_net.acp_f8[s]
-    alpha_cum_t_to_ell = epsilon_net.acp_f8[ell] / epsilon_net.acp_f8[t]
-    alpha_cum_s_to_ell = epsilon_net.acp_f8[ell] / epsilon_net.acp_f8[s]
-    std = (
+    alphas_cumprod_f64 = epsilon_net.alphas_cumprod.double()
+
+    alpha_cum_s_to_t = alphas_cumprod_f64[t] / alphas_cumprod_f64[s]
+    alpha_cum_t_to_ell = alphas_cumprod_f64[ell] / alphas_cumprod_f64[t]
+    alpha_cum_s_to_ell = alphas_cumprod_f64[ell] / alphas_cumprod_f64[s]
+    bridge_std = (
         eta * ((1 - alpha_cum_t_to_ell) * (1 - alpha_cum_s_to_t) / (1 - alpha_cum_s_to_ell)) ** 0.5
     )
-    coeff_xell = ((1 - alpha_cum_s_to_t - std**2) / (1 - alpha_cum_s_to_ell)) ** 0.5
-    coeff_xs = (alpha_cum_s_to_t**0.5) - coeff_xell * (alpha_cum_s_to_ell**0.5)
+    bridge_coeff_ell = ((1 - alpha_cum_s_to_t - bridge_std**2) / (1 - alpha_cum_s_to_ell)) ** 0.5
+    bridge_coeff_s = (alpha_cum_s_to_t**0.5) - bridge_coeff_ell * (alpha_cum_s_to_ell**0.5)
 
-    coeff_xell, coeff_xs, std = (
-        coeff_xell.to(dtype=f8),
-        coeff_xs.to(dtype=f8),
-        std.to(dtype=f8),
-    )
-    return coeff_xell * x_ell + coeff_xs * x_s, std
+    bridge_mean = bridge_coeff_ell * x_ell + bridge_coeff_s * x_s
+    return bridge_mean.to(dtype=dtype), bridge_std.to(
+        dtype=dtype
+    )  # todo actually I would like to create a container that is called
 
 
 def sample_bridge_kernel(

@@ -20,9 +20,12 @@ class DPSSampler(PosteriorSampler):
     def __call__(
         self,
         inverse_problem: InverseProblem,
-        num_sampling_steps: int = 10,
+        num_sampling_steps: int = 100,
         num_reconstructions: int = 1,
-        initial_noise: Tensor | None = None,
+        # todo I would like to be able to put a batch in the inverse problem and then set up num_reconstructions
+        #  at the end we would have (batch, num_reconstructions, ...)
+        #  however for now we keep it simple
+        # initial_noise: Tensor | None = None,
         gamma: float = 1.0,
         eta: float = 1.0,
         *args,
@@ -47,17 +50,19 @@ class DPSSampler(PosteriorSampler):
 
         # --- 2. Setup ---
         epsilon_net = self._epsilon_network
-        if (
-            not hasattr(epsilon_net, "set_timesteps")
-            or not hasattr(epsilon_net, "predict_x0")
-            or not hasattr(epsilon_net, "timesteps")
-        ):
-            raise AttributeError(
-                "self.network (epsilon_net) is missing required methods/attributes."
-            )
+        for attr in ("set_timesteps", "predict_x0", "timesteps"):
+            if not hasattr(epsilon_net, attr):
+                raise AttributeError(f"epsilon_net is missing required `{attr}`")
 
         epsilon_net.set_timesteps(num_sampling_steps)
-        sample = initial_noise.clone()
+
+        shape = (num_reconstructions, *inverse_problem.operator.x_shape)
+        sample = torch.randn(
+            size=shape,
+            device=epsilon_net.device,
+            dtype=epsilon_net.dtype,
+        )
+
         shape = (sample.shape[0], *(1,) * len(sample.shape[1:]))
         timesteps = epsilon_net.timesteps
 

@@ -8,4 +8,4 @@ class CustomNetwork(Network, ABC):
     def __init__(self, model: CustomModel):
         model = model.requires_grad_(False)
         self.model = model.eval()
-        super().__init__(alpha_cumprods=model.alpha_cumprods, timesteps=model.timesteps)
+        super().__init__(alphas_cumprod=model.alpha_cumprods, timesteps=model.timesteps)
