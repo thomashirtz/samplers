@@ -1,2 +1,8 @@
+accelerate
+diffusers
+pillow
 pytest
 torch
+torchvision
+tqdm
+transformers

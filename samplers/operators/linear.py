@@ -4,8 +4,9 @@ from typing import Tuple
 import torch
 from torch import Tensor
 
-from samplers.operators.abstract import Operator
-from samplers.utils import pad_zeros
+from samplers.utils.tensor import pad_zeros
+
+from .base import Operator
 
 
 class LinearOperator(Operator):
