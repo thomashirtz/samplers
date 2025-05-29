@@ -1,5 +1,5 @@
 from .base import NonlinearOperator, Operator
-from .identity import FlattenIdentityOperator, IdentityOperator
+from .identity import IdentityOperator
 from .inpainting import (
     CenterInpaintingOperator,
     CenterOutpaintingOperator,
@@ -17,7 +17,6 @@ __all__ = [
     "LinearOperator",
     "GeneralSVDOperator",
     "SVDOperator",
-    "FlattenIdentityOperator",
     "InpaintingOperator",
     "CenterInpaintingOperator",
     "CenterOutpaintingOperator",

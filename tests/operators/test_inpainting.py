@@ -16,6 +16,8 @@ def _assert_roundtrip(op: InpaintingOperator, x: torch.Tensor):
     kept = op.apply_V_transpose(x)
     recon = op.apply_V(kept)
     mask = op.mask
+    if mask.ndim == x.ndim - 1:  # (C,H,W)  →  (B,C,H,W)
+        mask = mask.unsqueeze(0).expand(x.size(0), *mask.shape)
 
     assert torch.allclose(recon[~mask], x[~mask])
     assert torch.all(recon[mask] == 0)
