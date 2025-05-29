@@ -1,6 +1,6 @@
 import torch
 
-from samplers.dtypes import Shape, Tensor
+from samplers.dtypes import Device, Shape, Tensor
 
 from .linear import LinearOperator
 
@@ -14,14 +14,13 @@ class IdentityOperator(LinearOperator):
     """
 
     def __init__(self, x_shape: Shape, flatten: bool = False) -> None:
-        super().__init__(x_shape=x_shape)
         self.flatten = flatten
+        super().__init__(x_shape=x_shape)
 
+    def _infer_y_shape(self, x_shape, device: Device = None):
         if self.flatten:
-            flat_dim = int(torch.tensor(self.x_shape).prod().item())
-            self.y_shape = (flat_dim,)
-        else:
-            self.y_shape = self.x_shape
+            return (int(torch.tensor(x_shape).prod().item()),)
+        return x_shape
 
     def apply(self, x: Tensor) -> Tensor:
         """
