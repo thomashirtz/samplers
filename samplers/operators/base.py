@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import torch
 
-from samplers.dtypes import Shape, Tensor
+from samplers.dtypes import Device, Shape, Tensor
 
 
 class Operator(torch.nn.Module, ABC):
@@ -22,11 +22,12 @@ class Operator(torch.nn.Module, ABC):
     • Store long-lived tensors as *buffers* so they move with `.to()`.
     """
 
-    def __init__(self, x_shape: Shape) -> None:
+    def __init__(self, x_shape: Shape, device: Device = None) -> None:
         super().__init__()
         self.x_shape = tuple(x_shape)  # todo still hesitating between input_shape and x_shape
         self.y_shape = self._infer_y_shape(
-            self.x_shape
+            self.x_shape,
+            device=device,
         )  # todo still hesitating between input_shape and y_shape
 
     @abstractmethod
@@ -45,10 +46,10 @@ class Operator(torch.nn.Module, ABC):
     def forward(self, x: Tensor) -> Tensor:
         return self.apply(x)
 
-    def _infer_y_shape(self, x_shape: Shape) -> Shape:
+    def _infer_y_shape(self, x_shape: Shape, device: Device = None) -> Shape:
         """Run a dummy batch-size-1 through `apply` to get y.shape[1:]."""
-        dummy = torch.zeros((1, *x_shape), dtype=torch.float32)
-        dummy = dummy.to(next(self.parameters(), torch.tensor([])).device)
+        device = device or next(self.buffers(), torch.tensor(0)).device
+        dummy = torch.zeros((1, *x_shape), dtype=torch.float32, device=device)
         y = self.apply(dummy)
         return tuple(y.shape[1:])
 

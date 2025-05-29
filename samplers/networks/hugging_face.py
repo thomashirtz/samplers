@@ -15,7 +15,7 @@ class HuggingFaceNetwork(Network):
         super().__init__(alphas_cumprod=alpha_cumprods)
         self._model = pipeline.unet.eval().requires_grad_(False)
 
-    def forward(self, x: Tensor, t: Tensor) -> Tensor:  # noqa: N802
+    def forward(self, x: Tensor, t: Tensor | int) -> Tensor:  # noqa: N802
         return self._model(sample=x, timestep=t).sample
 
     def set_timesteps(self, num_sampling_steps: int):

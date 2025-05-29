@@ -20,11 +20,8 @@ class DPSSampler(PosteriorSampler):
     def __call__(
         self,
         inverse_problem: InverseProblem,
-        num_sampling_steps: int = 100,
-        num_reconstructions: int = 1,
-        # todo I would like to be able to put a batch in the inverse problem and then set up num_reconstructions
-        #  at the end we would have (batch, num_reconstructions, ...)
-        #  however for now we keep it simple
+        num_sampling_steps: int = 50,
+        num_reconstructions: int = 2,
         # initial_noise: Tensor | None = None,
         gamma: float = 1.0,
         eta: float = 1.0,
@@ -68,17 +65,13 @@ class DPSSampler(PosteriorSampler):
 
         # --- 3. Sampling Loop ---
         for i in trange(len(timesteps) - 1, 1, -1):
-            t = timesteps[i]
-            t_prev = timesteps[i - 1]
-            t_tensor = torch.full((sample.shape[0],), t, device=sample.device, dtype=torch.long)
-            t_prev_tensor = torch.full(
-                (sample.shape[0],), t_prev, device=sample.device, dtype=torch.long
-            )
+            t = int(timesteps[i])
+            t_prev = int(timesteps[i - 1])
 
             sample.requires_grad_()
 
             # Predict x0 using the diffusion model
-            x_0t = epsilon_net.predict_x0(sample, t_tensor)
+            x_0t = epsilon_net.predict_x0(sample, t)
 
             # Calculate the gradient of the log-likelihood w.r.t. the sample (x_t)
             # We use log_likelihood(x_0t) as the potential
@@ -91,8 +84,8 @@ class DPSSampler(PosteriorSampler):
             sample = ddim_step(
                 x=sample.detach(),  # Detach before passing to ddim_step
                 epsilon_net=epsilon_net,
-                t=t_tensor,
-                t_prev=t_prev_tensor,
+                t=t,
+                t_prev=t_prev,
                 eta=eta,
                 e_t=x_0t,  # Using x_0t here as per original code
             )
@@ -109,7 +102,5 @@ class DPSSampler(PosteriorSampler):
                 sample = sample + scaled_grad
 
         # --- 4. Final Prediction ---
-        final_t = torch.full(
-            (sample.shape[0],), timesteps[1], device=sample.device, dtype=torch.long
-        )
+        final_t = int(timesteps[1])
         return epsilon_net.predict_x0(sample, final_t)
