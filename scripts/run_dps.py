@@ -18,6 +18,7 @@ if __name__ == "__main__":
 
     image = Image.open("ddpm.png")
     x_true = pil_to_tensor(image)
+    x_true = torch.stack((x_true, x_true))
     # x_true = torch.ones((3, 256, 256), dtype=dtype)
 
     operator = IdentityOperator(x_shape=(3, 256, 256))
@@ -30,6 +31,6 @@ if __name__ == "__main__":
     )
 
     sampler = DPSSampler(model_or_pipeline=ddpm_pipeline)
-    x_hat = sampler(inverse_problem=inverse_problem)
+    x_hat = sampler(inverse_problem=inverse_problem, num_sampling_steps=4)
     sample = tensor_to_pil(x_hat[0])
     sample.save("dps.jpg")
