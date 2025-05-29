@@ -72,7 +72,7 @@ class InpaintingOperator(SVDOperator):
         # hand these to the parent before it infers shapes
         self._kept_indices = kept_indices_tmp
         self._singular_values = singular_values_tmp
-        super().__init__(x_shape=self._x_shape_internal, device=device)
+        super().__init__(x_shape=self._x_shape_internal, device=target_device)
 
         # now turn them into proper buffers
         del self._kept_indices, self._singular_values
@@ -231,13 +231,7 @@ def get_mask_inpaint_center(
 
     # Mask is False for kept regions by default
     mask = torch.zeros(image_shape, dtype=torch.bool, device=device)
-
-    if len(image_shape) == 2:  # H, W
-        mask[start_h_px:end_h_px, start_w_px:end_w_px] = True  # True for missing
-    elif len(image_shape) == 3:  # C, H, W
-        mask[:, start_h_px:end_h_px, start_w_px:end_w_px] = True
-    else:
-        raise ValueError(f"Unsupported image_shape dimension: {len(image_shape)}. Expected 2 or 3.")
+    mask[..., start_h_px:end_h_px, start_w_px:end_w_px] = True
     return mask
 
 
@@ -257,16 +251,8 @@ def get_mask_side_painting(
 
     mask = torch.zeros(image_shape, dtype=torch.bool, device=device)  # False for kept
 
-    if len(image_shape) == 2:  # H, W
-        if left:
-            mask[:, :mask_width] = True  # True for missing
-        else:
-            mask[:, -mask_width:] = True
-    elif len(image_shape) == 3:  # C, H, W
-        if left:
-            mask[..., :, :mask_width] = True
-        else:
-            mask[..., :, -mask_width:] = True
+    if left:
+        mask[..., :mask_width] = True  # True for missing
     else:
-        raise ValueError(f"Unsupported image_shape dimension: {len(image_shape)}. Expected 2 or 3.")
+        mask[..., -mask_width:] = True
     return mask

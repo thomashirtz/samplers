@@ -48,8 +48,8 @@ class Operator(torch.nn.Module, ABC):
 
     def _infer_y_shape(self, x_shape: Shape, device: Device = None) -> Shape:
         """Run a dummy batch-size-1 through `apply` to get y.shape[1:]."""
-        dummy = torch.zeros((1, *x_shape), dtype=torch.float32)
-        dummy = dummy.to(next(self.parameters(), torch.tensor([], device=device)).device)
+        device = device or next(self.buffers(), torch.tensor(0)).device
+        dummy = torch.zeros((1, *x_shape), dtype=torch.float32, device=device)
         y = self.apply(dummy)
         return tuple(y.shape[1:])
 
