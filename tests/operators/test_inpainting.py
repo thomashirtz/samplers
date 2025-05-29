@@ -16,6 +16,9 @@ def _assert_roundtrip(op: InpaintingOperator, x: torch.Tensor):
     kept = op.apply_V_transpose(x)
     recon = op.apply_V(kept)
 
+    # todo: I don't like this test, I need to redo it, but I don't have time right now, it is working though
+    #  it seems overly complicated
+
     # Get single-image mask dimensions
     single_mask = op.mask
     if single_mask.dim() == 2 and x.dim() == 4:  # (H,W) vs (B,C,H,W)
