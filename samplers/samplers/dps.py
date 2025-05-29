@@ -53,9 +53,12 @@ class DPSSampler(PosteriorSampler):
 
         epsilon_net.set_timesteps(num_sampling_steps)
 
-        shape = (num_reconstructions, *inverse_problem.operator.x_shape)
+        x_shape = inverse_problem.operator.x_shape  # (C,H,W)
+        batch_shape = inverse_problem.batch_shape
+        sample_shape = (*batch_shape, num_reconstructions, *x_shape)
+
         sample = torch.randn(
-            size=shape,
+            size=sample_shape,
             device=epsilon_net.device,
             dtype=epsilon_net.dtype,
         )
@@ -71,7 +74,10 @@ class DPSSampler(PosteriorSampler):
             sample.requires_grad_()
 
             # Predict x0 using the diffusion model
-            x_0t = epsilon_net.predict_x0(sample, t)
+            sample_flatten, leading_shape = self._flatten_leading(sample, x_shape=x_shape)
+            sample_flatten.requires_grad_()
+            x_0t_flatten = epsilon_net.predict_x0(sample_flatten, t)
+            x_0t = self._unflatten_leading(x_0t_flatten, batch_shape=leading_shape)
 
             # Calculate the gradient of the log-likelihood w.r.t. the sample (x_t)
             # We use log_likelihood(x_0t) as the potential
@@ -103,4 +109,7 @@ class DPSSampler(PosteriorSampler):
 
         # --- 4. Final Prediction ---
         final_t = int(timesteps[1])
-        return epsilon_net.predict_x0(sample, final_t)
+        x_0t_flatten, leading_shape = self._flatten_leading(sample, x_shape=x_shape)
+        x_hat_flatten = epsilon_net.predict_x0(x_0t_flatten, final_t)
+        x_hat = self._unflatten_leading(x_hat_flatten, batch_shape=leading_shape)
+        return x_hat

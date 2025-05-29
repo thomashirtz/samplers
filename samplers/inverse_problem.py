@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import torch
 
-from samplers.dtypes import RNG, Tensor
+from samplers.dtypes import RNG, Shape, Tensor
 from samplers.noise import NoiseModel
 from samplers.operators import Operator
 
@@ -22,6 +22,10 @@ class InverseProblem:
 
     def score(self, x: Tensor) -> Tensor:
         return self.noise.score(self.residual(x)) * (-1)  # d/dx of log p
+
+    @property
+    def batch_shape(self) -> Shape:
+        return self.observation.shape[: -len(self.operator.y_shape)]
 
     @classmethod
     def from_observation(cls, obs: Tensor, *, operator: Operator, noise: NoiseModel):
