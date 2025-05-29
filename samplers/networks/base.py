@@ -16,12 +16,12 @@ class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
         self.register_buffer("timesteps", tensor=None, persistent=False)
 
     @abstractmethod
-    def forward(self, x: Tensor, t: Tensor): ...
+    def forward(self, x: Tensor, t: Tensor | int): ...
 
     @abstractmethod
     def set_timesteps(self, num_sampling_steps: int): ...
 
-    def predict_x0(self, x: Tensor, t: Tensor):
+    def predict_x0(self, x: Tensor, t: Tensor | int):
         acp_t = self.alphas_cumprod[t] / self.alphas_cumprod[self.timesteps[0].int()]
         return (x - (1 - acp_t) ** 0.5 * self.forward(x, t)) / (acp_t**0.5)
 
