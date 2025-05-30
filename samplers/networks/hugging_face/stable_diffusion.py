@@ -21,7 +21,7 @@ class ConditioningState:
     ip_adapter_embeds: torch.Tensor | None
 
 
-class SDNetworkAdapter(LatentNetwork):
+class SDNetwork(LatentNetwork):
     """Expose a `StableDiffusionPipeline` as an ε-network for posterior
     samplers.
 
