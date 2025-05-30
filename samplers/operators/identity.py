@@ -6,27 +6,42 @@ from .linear import LinearOperator
 
 
 class IdentityOperator(LinearOperator):
-    """If flatten=False:  Y = x                 – identity x = Y –
-    transpose/inverse.
-
-    If flatten=True:   Y = x.reshape(..., -1)                – flatten per-sample dims
-                        x = Y.reshape(..., *x_shape)        – restore original per-sample dims
-    """
+    """Identity operator with optional flattening."""
 
     def __init__(self, x_shape: Shape, flatten: bool = False) -> None:
+        """Initialize the identity operator.
+
+        Args:
+            x_shape: Shape of the input tensor.
+            flatten: If True, flatten the input tensor in the forward pass
+                     and reshape it back in the transpose/inverse pass.
+        """
         self.flatten = flatten
         super().__init__(x_shape=x_shape)
 
     def _infer_y_shape(self, x_shape, device: Device = None):
+        """Infer the output shape from the input shape.
+
+        Args:
+            x_shape: Shape of the input tensor.
+            device: Device on which to place the operator (unused).
+
+        Returns:
+            Shape of the output tensor.
+        """
         if self.flatten:
             return (int(torch.tensor(x_shape).prod().item()),)
         return x_shape
 
     def apply(self, x: Tensor) -> Tensor:
-        """
-        Forward: H(x)
-        input shape:  (*batch, *x_shape)
-        output shape: (*batch, *y_shape)
+        """Forward map: $y = A(x)$
+
+        Args:
+            x: Input tensor with shape (*batch, *x_shape).
+
+        Returns:
+            If flatten=False: The input tensor unchanged.
+            If flatten=True: The input tensor flattened to shape (*batch, -1).
         """
         if self.flatten:
             batch_dims = x.shape[: -len(self.x_shape)]
@@ -35,10 +50,14 @@ class IdentityOperator(LinearOperator):
             return x
 
     def apply_transpose(self, y: Tensor) -> Tensor:
-        """
-        Adjoint / pseudo-inverse: Hᵀ(y)
-        input shape:  (*batch, *y_shape)
-        output shape: (*batch, *x_shape)
+        """Adjoint/transpose map: $x = A^T(y)$
+
+        Args:
+            y: Input tensor with shape (*batch, *y_shape).
+
+        Returns:
+            If flatten=False: The input tensor unchanged.
+            If flatten=True: The input tensor reshaped to (*batch, *x_shape).
         """
         if self.flatten:
             batch_dims = y.shape[: -len(self.y_shape)]
