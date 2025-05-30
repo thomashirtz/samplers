@@ -22,6 +22,8 @@ class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
     def set_timesteps(self, num_sampling_steps: int): ...
 
     def predict_x0(self, x: Tensor, t: Tensor | int):
+        # todo actually I don't like this naming because it seems like most of the networks are becoming latent,
+        #  I would prefer something that is space (pixel space/latent space) agnostic (like sample)
         acp_t = self.alphas_cumprod[t] / self.alphas_cumprod[self.timesteps[0].int()]
         return (x - (1 - acp_t) ** 0.5 * self.forward(x, t)) / (acp_t**0.5)
 
@@ -38,7 +40,7 @@ class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
         return self.alphas_cumprod.dtype
 
 
-class LatentNetwork(torch.nn.Module, ABC):
+class LatentNetwork(Network):
 
     def decode(self, z: Tensor, differentiable: bool = True):
         if not differentiable:
@@ -51,13 +53,13 @@ class LatentNetwork(torch.nn.Module, ABC):
     @abstractmethod
     def _decode(self, z: Tensor): ...
 
-    def encode(self, data: Tensor, differentiable: bool = True):
+    def encode(self, x: Tensor, differentiable: bool = True):
         if not differentiable:
             with torch.no_grad():
-                out = self._encode(data=data)
+                out = self._encode(x=x)
             return out.detach()
         else:
-            return self._encode(data=data)
+            return self._encode(x=x)
 
     @abstractmethod
-    def _encode(self, data: Tensor): ...
+    def _encode(self, x: Tensor): ...
