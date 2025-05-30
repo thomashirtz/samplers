@@ -1,11 +1,11 @@
 from .base import LatentNetwork, Network
 from .custom import CustomNetwork
-from .hugging_face import HuggingFaceNetwork
+from .hugging_face import DDPMNetwork
 from .utilities import build_network
 
 __all__ = [
     "CustomNetwork",
-    "HuggingFaceNetwork",
+    "DDPMNetwork",
     "Network",
     "LatentNetwork",
     "build_network",
