@@ -8,17 +8,9 @@ from .linear import SVDOperator
 class InpaintingOperator(SVDOperator):
     """Inpainting/outpainting operator.
 
-    This operator handles keeping or masking pixels in an image:
-
-    Args:
-        x_shape: Shape of the input image (e.g., (C, H, W)).
-        mask: Boolean mask where True indicates missing/masked pixels.
-        flatten: If True, forward returns only kept pixels as a vector.
-                 If False, forward returns full image with zeros at masked positions.
-        device: Device on which to place the operator.
-
-    Note:
-        All methods are batch-agnostic and support any number of leading dimensions.
+    This operator handles keeping or masking pixels in an image. All
+    methods are batch-agnostic and support any number of leading
+    dimensions.
     """
 
     def __init__(
@@ -26,9 +18,18 @@ class InpaintingOperator(SVDOperator):
         x_shape: Shape,
         mask: Tensor,
         flatten: bool = True,
-        device: Device | None = None,
+        device: Device = None,
     ):
-        """Initialize the inpainting operator."""
+        """Initialize the inpainting operator.
+
+        Args:
+            x_shape: Shape of the input image (e.g., (C, H, W)).
+            mask: Boolean mask where True indicates missing/masked pixels.
+            flatten: If True, forward returns only kept pixels as a vector.
+                     If False, forward returns full image with zeros at masked positions.
+            device: Device on which to place the operator.
+        """
+
         # User flags / shapes
         self._x_shape_internal: Shape = tuple(x_shape)
         self.flatten: bool = bool(flatten)
