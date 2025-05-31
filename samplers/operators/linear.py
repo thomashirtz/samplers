@@ -46,7 +46,7 @@ class LinearOperator(Operator):
 
 
 class SVDOperator(LinearOperator):
-    """Linear operator defined via SVD: $H = U \Sigma V^T$.
+    r"""Linear operator defined via SVD: $H = U \Sigma V^T$.
 
     Shapes (thin SVD, rank = k):
       $U$ : $(m, k)$ – left singular vectors
@@ -79,7 +79,7 @@ class SVDOperator(LinearOperator):
 
     @abstractmethod
     def apply_U(self, z: Tensor) -> Tensor:
-        """Computes $U \cdot z$ where $U$ has shape $(m, k)$ and $z$ is
+        r"""Computes $U \cdot z$ where $U$ has shape $(m, k)$ and $z$ is
         $(*batch, k)$.
 
         Args:
@@ -92,7 +92,7 @@ class SVDOperator(LinearOperator):
 
     @abstractmethod
     def apply_U_transpose(self, y: Tensor) -> Tensor:
-        """Computes $U^T \cdot y$ with $y$ of shape $(*batch, m) \to (*batch,
+        r"""Computes $U^T \cdot y$ with $y$ of shape $(*batch, m) \to (*batch,
         k)$.
 
         Args:
@@ -105,7 +105,7 @@ class SVDOperator(LinearOperator):
 
     @abstractmethod
     def apply_V(self, z: Tensor) -> Tensor:
-        """Computes $V \cdot z$ where $V$ is $(n, k)$ and $z$ is $(*batch, k)
+        r"""Computes $V \cdot z$ where $V$ is $(n, k)$ and $z$ is $(*batch, k)
         \to (*batch, n)$.
 
         Args:
@@ -118,7 +118,7 @@ class SVDOperator(LinearOperator):
 
     @abstractmethod
     def apply_V_transpose(self, x: Tensor) -> Tensor:
-        """Computes $V^T \cdot x$ with $x$ of shape $(*batch, n) \to (*batch,
+        r"""Computes $V^T \cdot x$ with $x$ of shape $(*batch, n) \to (*batch,
         k)$.
 
         Args:
@@ -184,7 +184,7 @@ class SVDOperator(LinearOperator):
 
 
 class GeneralSVDOperator(SVDOperator):
-    """SVD operator with explicit matrices $U$, $\Sigma$, and $V^T$.
+    r"""SVD operator with explicit matrices $U$, $\Sigma$, and $V^T$.
 
     This class allows creation of an operator from an explicit SVD
     decomposition, with $U$, $\Sigma$, and $V^T$ provided as tensors.

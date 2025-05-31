@@ -1,9 +1,11 @@
+from typing import Any
+
 import torch
-from diffusers import AutoencoderKL, DDPMPipeline, StableDiffusionPipeline, UNet2DConditionModel
-from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
+from diffusers import DDPMPipeline
 from torch import Tensor
 
-from samplers.networks import LatentNetwork, Network
+from samplers.dtypes import Device, DType
+from samplers.networks import Network
 
 
 class DDPMNetwork(Network):
@@ -15,6 +17,25 @@ class DDPMNetwork(Network):
 
         super().__init__(alphas_cumprod=alpha_cumprods)
         self._model = pipeline.unet.eval().requires_grad_(False)
+
+    # todo maybe do a base class with this inside to make it more dry put the pipeline type as class attribute
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str,
+        cache_dir: str | None = None,
+        dtype: DType = None,
+        device: Device = None,
+        **pipeline_kwargs: Any,
+    ) -> "DDPMNetwork":
+        pipeline = DDPMPipeline.from_pretrained(
+            pretrained_model_name_or_path,
+            cache_dir=cache_dir,
+            dtype=dtype,
+            device=device,
+            **pipeline_kwargs,
+        )
+        return cls(pipeline)
 
     def forward(self, sample: Tensor, t: Tensor | int) -> Tensor:  # noqa: N802
         return self._model(sample=sample, timestep=t).sample
