@@ -1,7 +1,13 @@
+import dataclasses
 from abc import ABC, abstractmethod
+from typing import Generic, TypeVar
 
 import torch
 from torch import Tensor
+
+from samplers.dtypes import Shape
+
+C = TypeVar("C")
 
 
 class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
@@ -40,7 +46,16 @@ class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
         return self.alphas_cumprod.dtype
 
 
-class LatentNetwork(Network):
+class LatentNetwork(Network, Generic[C]):
+
+    @abstractmethod
+    def get_latent_shape(self, x_shape: Shape) -> Shape: ...
+
+    @abstractmethod
+    def set_condition(self, condition: C) -> None:
+        """Store everything needed by the UNet/VAE/etc. as a single object of
+        type C."""
+        ...
 
     def decode(self, z: Tensor, differentiable: bool = True):
         if not differentiable:
@@ -63,3 +78,11 @@ class LatentNetwork(Network):
 
     @abstractmethod
     def _encode(self, x: Tensor): ...
+
+
+@dataclasses.dataclass(slots=True)
+class NoCondition:
+    """Placeholder type meaning “this diffusion model does NOT use any
+    prompt/conditioning.”"""
+
+    pass

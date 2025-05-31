@@ -6,7 +6,29 @@ from diffusers import AutoencoderKL, StableDiffusionPipeline, UNet2DConditionMod
 from diffusers.image_processor import PipelineImageInput
 from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 
+from samplers.dtypes import Shape
 from samplers.networks import LatentNetwork
+
+
+@dataclasses.dataclass(slots=True)
+class StableDiffusionCondition:
+    # textual guidance
+    prompt: str | list[str] = ""
+    negative_prompt: str | list[str] | None = None
+    guidance_scale: float = 7.5
+    num_images_per_prompt: int = 1
+
+    # optional pre-computed embeddings
+    prompt_embeds: torch.Tensor | None = None
+    negative_prompt_embeds: torch.Tensor | None = None
+    clip_skip: int | None = None
+
+    # cross-attention / LoRA tweaks
+    cross_attention_kwargs: dict[str, Any] | None = None
+
+    # IP-Adapter support
+    ip_adapter_image: PipelineImageInput | None = None
+    ip_adapter_image_embeds: list[torch.Tensor] | None = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -21,7 +43,7 @@ class ConditioningState:
     ip_adapter_embeds: torch.Tensor | None
 
 
-class SDNetwork(LatentNetwork):
+class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
     """Expose a `StableDiffusionPipeline` as an ε-network for posterior
     samplers.
 
@@ -44,6 +66,9 @@ class SDNetwork(LatentNetwork):
     """
 
     def __init__(self, pipeline: StableDiffusionPipeline) -> None:
+        # todo also one idea could be to create mirror of diffusers "pipeline" and just have to give the name of the repository
+        #  network = StableDiffusionNetwork(
+        #  create from_pretrained
         betas = pipeline.scheduler.betas
         acp = (1.0 - betas).cumprod(dim=0)
         one = torch.tensor([1.0], dtype=betas.dtype, device=betas.device)
@@ -53,7 +78,13 @@ class SDNetwork(LatentNetwork):
         self._pipeline: StableDiffusionPipeline = pipeline
         self._unet: UNet2DConditionModel = pipeline.unet.eval().requires_grad_(False)
         self._vae: AutoencoderKL = pipeline.vae.eval().requires_grad_(False)
+
+        # todo find better names for those three
+        # The multiplication factor of the latents
         self._latent_scaling_factor = pipeline.vae.config.scaling_factor
+        # The size change of the latents
+        self.latent_scale_factor = pipeline.vae_scale_factor
+        self.num_latent_channels = pipeline.vae.config.latent_channels
 
         self._conditioning: ConditioningState | None = None
 
@@ -61,78 +92,68 @@ class SDNetwork(LatentNetwork):
         timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)
 
-    @torch.inference_mode()
-    def set_condition(
-        self,
-        *,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        guidance_scale: float = 7.5,
-        num_images_per_prompt: int = 1,  # todo find out how to handle that
-        prompt_embeds: torch.Tensor | None = None,
-        negative_prompt_embeds: torch.Tensor | None = None,
-        clip_skip: int | None = None,
-        cross_attention_kwargs: dict[str, Any] | None = None,
-        ip_adapter_image: PipelineImageInput | None = None,
-        ip_adapter_image_embeds: list[torch.Tensor] | None = None,
-    ) -> None:
-        """Compute and store all tensors required by the UNet for one batch.
+    def get_latent_shape(self, x_shape: Shape) -> Shape:
+        channel, height, width = x_shape
 
-        This method **must** be called every time the prompt batch changes.
+        scale_factor = self.latent_scale_factor
+        if (height % scale_factor) or (width % scale_factor):
+            raise ValueError(
+                f"H={height} and W={width} must both be divisible by the latent_scale_factor={scale_factor}."
+            )
+
+        return self.num_latent_channels, height // scale_factor, width // scale_factor
+
+    @torch.inference_mode()
+    def set_condition(self, condition: StableDiffusionCondition | None) -> None:
+        """Cache prompt / negative-prompt / image embeddings for the next
+        batch.
 
         Parameters
         ----------
-        prompt
-            Text prompt(s) that guide generation.
-        negative_prompt
-            Negative prompt(s) used for classifier-free guidance.
-        guidance_scale
-            Strength of classifier-free guidance.  Values > 1 enable CFG.
-        num_images_per_prompt
-            How many images will be generated for *each* prompt string.
-        prompt_embeds, negative_prompt_embeds
-            Pre-computed embeddings (skip CLIP encode step if supplied).
-        clip_skip
-            Number of CLIP layers to skip (see SDXL paper).
-        cross_attention_kwargs
-            Extra kwargs forwarded to all `CrossAttention` modules (e.g. LoRA).
-        ip_adapter_image, ip_adapter_image_embeds
-            Optional conditioning images or their embeddings.
+        condition : StableDiffusionCondition
+            The conditioning specification created by the caller.
         """
-        cfg_active = guidance_scale > 1.0
+        condition = condition if condition is not None else StableDiffusionCondition()
 
-        # 1. Text embeddings via Diffusers’ internal helper
-        lora_scale = cross_attention_kwargs.get("scale") if cross_attention_kwargs else None
+        # unpack once for readability
+        cfg_active = condition.guidance_scale > 1.0
+        lora_scale = (
+            condition.cross_attention_kwargs.get("scale")
+            if condition.cross_attention_kwargs
+            else None
+        )
+
+        # 1. Text embeddings
         pos_embeds, neg_embeds = self._pipeline._encode_prompt(  # pyright: ignore
-            prompt,
+            condition.prompt,
             device=self.device,
-            num_images_per_prompt=num_images_per_prompt,
+            num_images_per_prompt=condition.num_images_per_prompt,
             do_classifier_free_guidance=cfg_active,
-            negative_prompt=negative_prompt,
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt=condition.negative_prompt,
+            prompt_embeds=condition.prompt_embeds,
+            negative_prompt_embeds=condition.negative_prompt_embeds,
             lora_scale=lora_scale,
-            clip_skip=clip_skip,
+            clip_skip=condition.clip_skip,
         )
         prompt_embeddings = torch.cat([neg_embeds, pos_embeds]) if cfg_active else pos_embeds
 
-        # 2. Image embeddings for IP-Adapter (if requested)
+        # 2. IP-Adapter image embeddings
         image_embeds = None
-        if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
+        if condition.ip_adapter_image is not None or condition.ip_adapter_image_embeds is not None:
             image_embeds = self._pipeline.prepare_ip_adapter_image_embeds(
-                ip_adapter_image,
-                ip_adapter_image_embeds,
+                condition.ip_adapter_image,
+                condition.ip_adapter_image_embeds,
                 device=self.device,
                 batch_size=prompt_embeddings.size(0),
                 do_classifier_free_guidance=cfg_active,
             )
 
-        # 3. Store everything inside a dataclass for easy inspection
+        # 3. Store everything for forward()
         self._conditioning = ConditioningState(
             prompt_embeds=prompt_embeddings,
             classifier_free_guidance=cfg_active,
-            guidance_scale=guidance_scale,
-            cross_attention_kwargs=cross_attention_kwargs,
+            guidance_scale=condition.guidance_scale,
+            cross_attention_kwargs=condition.cross_attention_kwargs,
             ip_adapter_embeds=image_embeds,
         )
 
