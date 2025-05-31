@@ -1,5 +1,6 @@
 accelerate
 diffusers
+git+https://github.com/thomashirtz/latent-diffusion
 pillow
 pytest
 torch
