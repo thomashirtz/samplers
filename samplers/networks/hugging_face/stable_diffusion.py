@@ -6,7 +6,7 @@ from diffusers import AutoencoderKL, StableDiffusionPipeline, UNet2DConditionMod
 from diffusers.image_processor import PipelineImageInput
 from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 
-from samplers.dtypes import Shape
+from samplers.dtypes import Device, DType, Shape
 from samplers.networks import LatentNetwork
 
 
@@ -87,6 +87,24 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         self.num_latent_channels = pipeline.vae.config.latent_channels
 
         self._conditioning: ConditioningState | None = None
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str,
+        cache_dir: str | None = None,
+        dtype: DType = None,
+        device: Device = None,
+        **pipeline_kwargs: Any,
+    ) -> "StableDiffusionNetwork":
+        pipeline = StableDiffusionPipeline.from_pretrained(
+            pretrained_model_name_or_path,
+            cache_dir=cache_dir,
+            dtype=dtype,
+            device=device,
+            **pipeline_kwargs,
+        )
+        return cls(pipeline)
 
     def set_timesteps(self, num_sampling_steps: int):
         timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)

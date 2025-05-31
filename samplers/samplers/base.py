@@ -1,15 +1,17 @@
 from abc import ABC, abstractmethod
 
 from samplers.dtypes import Shape, Tensor
-from samplers.networks import build_network
+from samplers.networks import Network
 
 
 class PosteriorSampler(ABC):
-    def __init__(self, model_or_pipeline):
-        self._epsilon_network = build_network(model_or_pipeline)
+    def __init__(self, network: Network):
+        self._epsilon_network = network
 
     @staticmethod
-    def _flatten_leading(x: Tensor, *, x_shape: Shape) -> tuple[Tensor, Shape]:
+    def _flatten_leading(
+        x: Tensor, *, x_shape: Shape
+    ) -> tuple[Tensor, Shape]:  # todo create a container
         """Collapse every axis before `x_shape` into one; return the original
         batch_shape."""
         batch_shape = x.shape[: -len(x_shape)]  # () if no batching

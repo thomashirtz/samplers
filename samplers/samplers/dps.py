@@ -19,7 +19,7 @@ class DPSSampler(PosteriorSampler):
         self,
         inverse_problem: InverseProblem,
         num_sampling_steps: int = 50,
-        num_reconstructions: int = 2,
+        num_reconstructions: int = 1,
         # initial_noise: Tensor | None = None,
         gamma: float = 1.0,
         eta: float = 1.0,

@@ -45,6 +45,10 @@ class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
     def dtype(self) -> torch.dtype:
         return self.alphas_cumprod.dtype
 
+    @classmethod
+    @abstractmethod
+    def from_pretrained(cls, *args, **kwargs): ...
+
 
 class LatentNetwork(Network, Generic[C]):
 
