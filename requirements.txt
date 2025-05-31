@@ -1,6 +1,6 @@
 accelerate
 diffusers
-git+https://github.com/thomashirtz/latent-diffusion
+git+https://github.com/thomashirtz/latent-diffusion # custom version of ldm where I added __init__.py to be able to import the modules.
 pillow
 pytest
 torch
