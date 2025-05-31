@@ -83,3 +83,8 @@ lightning:
 
   trainer:
     benchmark: True
+
+download:
+  name: ffhq-ldm...
+  wget: http...
+  directory: latent-diffusion (or first stage or else)
