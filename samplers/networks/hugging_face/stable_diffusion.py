@@ -5,6 +5,7 @@ import torch
 from diffusers import AutoencoderKL, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.image_processor import PipelineImageInput
 from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import rescale_noise_cfg
 
 from samplers.dtypes import Device, DType, Shape
 from samplers.networks import LatentNetwork
@@ -37,7 +38,7 @@ class ConditioningState:
     run."""
 
     prompt_embeds: torch.Tensor
-    classifier_free_guidance: bool
+    do_classifier_free_guidance: bool
     guidance_scale: float
     cross_attention_kwargs: dict[str, Any] | None
     add_cond_kwargs: dict[str, Any] | None
@@ -100,12 +101,30 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
             cache_dir=cache_dir,
             torch_dtype=torch_dtype,
             **pipeline_kwargs,
-        ).to(device)
+        )
+        pipeline = pipeline.to(device)
         return cls(pipeline=pipeline)
+
+    def to(self, device: torch.device | str | None = None, dtype: torch.dtype | None = None):
+        # _pipeline is not a nn.Module, therefore anything below _pipeline won't be move by the default .to.
+        # The .to has therefore been extended to move the pipeline as well.
+        device_kwargs = dict(device=device) if device else {}
+        self._pipeline = self._pipeline.to(dtype=dtype, **device_kwargs)
+        super().to(dtype=dtype, **device_kwargs)
+        return self
 
     def set_timesteps(self, num_sampling_steps: int):
         timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)
+        # CGPT said that SDXL is between 0-1111, it proposes:
+        # self._pipeline.scheduler.set_timesteps(num_sampling_steps, device=self.device)
+        # self.register_buffer("timesteps",
+        #                      self._pipeline.scheduler.timesteps.to(torch.long),
+        #                      persistent=True)
+        # todo need to check if it works
+        # Hard-coding 0‒999 still breaks SDXL (0‒1111) and any custom scheduler.
+        # The two-liner you commented out is the robust solution – just remember that many schedulers keep the dtype
+        # as float, so don’t cast to long unless your sampler insists on it.
 
     def get_latent_shape(self, x_shape: Shape) -> Shape:
         channel, height, width = x_shape
@@ -189,17 +208,17 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         # 6.2 Optionally get Guidance Scale Embedding
         timestep_cond = None
         if self._unet.config.time_cond_proj_dim is not None:
-            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(
+            guidance_scale_tensor = torch.tensor(condition.guidance_scale - 1).repeat(
                 batch_size * num_images_per_prompt
             )
-            timestep_cond = self.get_guidance_scale_embedding(
-                guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
+            timestep_cond = self._pipeline.get_guidance_scale_embedding(
+                guidance_scale_tensor, embedding_dim=self._unet.config.time_cond_proj_dim
             ).to(device=self.device, dtype=self._unet.dtype)
 
         # 3. Store everything for forward()
         self._conditioning = ConditioningState(
             prompt_embeds=prompt_embeddings,
-            classifier_free_guidance=do_classifier_free_guidance,
+            do_classifier_free_guidance=do_classifier_free_guidance,
             guidance_scale=condition.guidance_scale,
             cross_attention_kwargs=condition.cross_attention_kwargs,
             add_cond_kwargs=added_cond_kwargs,
@@ -213,11 +232,14 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
 
         state = self._conditioning
 
-        latent_input = torch.cat([latents, latents]) if state.classifier_free_guidance else latents
+        latent_model_input = (
+            torch.cat([latents] * 2) if state.do_classifier_free_guidance else latents
+        )
+        latent_model_input = self._pipeline.scheduler.scale_model_input(latent_model_input, t)
 
         # Main UNet call.
         noise_pred = self._unet(
-            sample=latent_input,
+            sample=latent_model_input,
             timestep=t,
             encoder_hidden_states=state.prompt_embeds,
             cross_attention_kwargs=state.cross_attention_kwargs,
@@ -226,16 +248,17 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         ).sample
 
         # Collapse back to a single batch using the CFG formula.
-        if state.classifier_free_guidance:
+        if state.do_classifier_free_guidance:
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
             noise_pred = noise_pred_uncond + state.guidance_scale * (
                 noise_pred_text - noise_pred_uncond
             )
 
-        # fixme potentially add this one from source code
-        #  if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
-        #      # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
-        #      noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=self.guidance_rescale)
+        if state.do_classifier_free_guidance and self._pipeline.guidance_rescale > 0.0:
+            # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
+            noise_pred = rescale_noise_cfg(
+                noise_pred, noise_pred_text, guidance_rescale=self._pipeline.guidance_rescale
+            )
 
         return noise_pred
 
@@ -263,3 +286,13 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
     def clear_condition(self) -> None:
         """Remove cached embeddings to release VRAM."""
         self._conditioning = None
+        torch.cuda.empty_cache()
+
+    # CGPT suggestions:
+    def enable_sequential_cpu_offload(self, **kwargs):
+        self._pipeline.enable_sequential_cpu_offload(**kwargs)
+        return self
+
+    def enable_xformers_memory_efficient_attention(self, **kwargs):
+        self._pipeline.enable_xformers_memory_efficient_attention(**kwargs)
+        return self

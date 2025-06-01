@@ -9,12 +9,6 @@ from samplers.networks import LatentNetwork
 from samplers.samplers.base import PosteriorSampler
 from samplers.samplers.utilities import ddim_step
 
-# Assuming 'Network' and 'LatentNetwork' might be needed for type hints
-# and that the actual network passed will conform to the requirements.
-# from samplers.network import Network, LatentNetwork
-
-
-# Condition covariant
 Condition_co = TypeVar("Condition_co", covariant=True)
 
 
