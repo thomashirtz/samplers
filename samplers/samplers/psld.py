@@ -52,7 +52,7 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
         gamma: float = 1.0,
         omega: float = 0.1,
         eta: float = 1.0,
-        decode_output: bool = False,
+        decode_output: bool = True,
         condition: Condition_co | None = None,
         *args,
         **kwargs,

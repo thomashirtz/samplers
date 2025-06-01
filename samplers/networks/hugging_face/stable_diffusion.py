@@ -40,7 +40,7 @@ class ConditioningState:
     classifier_free_guidance: bool
     guidance_scale: float
     cross_attention_kwargs: dict[str, Any] | None
-    ip_adapter_embeds: torch.Tensor | None
+    add_cond_kwargs: dict[str, Any] | None
 
 
 class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
@@ -66,45 +66,41 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
     """
 
     def __init__(self, pipeline: StableDiffusionPipeline) -> None:
-        # todo also one idea could be to create mirror of diffusers "pipeline" and just have to give the name of the repository
-        #  network = StableDiffusionNetwork(
-        #  create from_pretrained
         betas = pipeline.scheduler.betas
-        acp = (1.0 - betas).cumprod(dim=0)
-        one = torch.tensor([1.0], dtype=betas.dtype, device=betas.device)
+        acp = (1.0 - betas).cumprod(dim=0).to(dtype=pipeline.dtype, device=pipeline.device)
+        one = torch.tensor([1.0], dtype=pipeline.dtype, device=pipeline.device)
         alpha_cumprods = torch.cat([one, acp])
 
         super().__init__(alphas_cumprod=alpha_cumprods)
+
+        self._conditioning: ConditioningState | None = None
         self._pipeline: StableDiffusionPipeline = pipeline
         self._unet: UNet2DConditionModel = pipeline.unet.eval().requires_grad_(False)
         self._vae: AutoencoderKL = pipeline.vae.eval().requires_grad_(False)
 
-        # todo find better names for those three
-        # The multiplication factor of the latents
-        self._latent_scaling_factor = pipeline.vae.config.scaling_factor
-        # The size change of the latents
-        self.latent_scale_factor = pipeline.vae_scale_factor
-        self.num_latent_channels = pipeline.vae.config.latent_channels
-
-        self._conditioning: ConditioningState | None = None
+        # The factor by which the VAE multiplies its latent tensors
+        self._vae_latent_multiplier = pipeline.vae.config.scaling_factor
+        # The ratio by which the latent’s spatial dimensions are scaled
+        self.latent_resolution_ratio = pipeline.vae_scale_factor
+        # The number of channels contained in each latent tensor
+        self.latent_num_channels = pipeline.vae.config.latent_channels
 
     @classmethod
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: str,
         cache_dir: str | None = None,
-        dtype: DType = None,
+        torch_dtype: DType = None,
         device: Device = None,
         **pipeline_kwargs: Any,
     ) -> "StableDiffusionNetwork":
         pipeline = StableDiffusionPipeline.from_pretrained(
             pretrained_model_name_or_path,
             cache_dir=cache_dir,
-            dtype=dtype,
-            device=device,
+            torch_dtype=torch_dtype,
             **pipeline_kwargs,
-        )
-        return cls(pipeline)
+        ).to(device)
+        return cls(pipeline=pipeline)
 
     def set_timesteps(self, num_sampling_steps: int):
         timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)
@@ -113,16 +109,17 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
     def get_latent_shape(self, x_shape: Shape) -> Shape:
         channel, height, width = x_shape
 
-        scale_factor = self.latent_scale_factor
+        scale_factor = self.latent_resolution_ratio
         if (height % scale_factor) or (width % scale_factor):
             raise ValueError(
                 f"H={height} and W={width} must both be divisible by the latent_scale_factor={scale_factor}."
             )
 
-        return self.num_latent_channels, height // scale_factor, width // scale_factor
+        return self.latent_num_channels, height // scale_factor, width // scale_factor
 
     @torch.inference_mode()
     def set_condition(self, condition: StableDiffusionCondition | None) -> None:
+        # todo add num_reconstructions and batch size to the set_condition
         """Cache prompt / negative-prompt / image embeddings for the next
         batch.
 
@@ -133,8 +130,16 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         """
         condition = condition if condition is not None else StableDiffusionCondition()
 
+        # fixme number of sample in the original code:
+        #  if prompt is not None and isinstance(prompt, str):
+        #      batch_size = 1
+        #  elif prompt is not None and isinstance(prompt, list):
+        #      batch_size = len(prompt)
+        #  else:
+        #      batch_size = prompt_embeds.shape[0]
+
         # unpack once for readability
-        cfg_active = condition.guidance_scale > 1.0
+        do_classifier_free_guidance = condition.guidance_scale > 1.0
         lora_scale = (
             condition.cross_attention_kwargs.get("scale")
             if condition.cross_attention_kwargs
@@ -142,37 +147,44 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         )
 
         # 1. Text embeddings
-        pos_embeds, neg_embeds = self._pipeline._encode_prompt(  # pyright: ignore
-            condition.prompt,
+        prompt_embeddings, negative_prompt_embeddings = self._pipeline.encode_prompt(
+            prompt=condition.prompt,
             device=self.device,
             num_images_per_prompt=condition.num_images_per_prompt,
-            do_classifier_free_guidance=cfg_active,
+            # todo how to handle this variable, it is the sampler that has this information, it would be messy to add
+            #  a parameter in the set_condition given by the sampler ..
+            do_classifier_free_guidance=do_classifier_free_guidance,
             negative_prompt=condition.negative_prompt,
             prompt_embeds=condition.prompt_embeds,
             negative_prompt_embeds=condition.negative_prompt_embeds,
             lora_scale=lora_scale,
             clip_skip=condition.clip_skip,
         )
-        prompt_embeddings = torch.cat([neg_embeds, pos_embeds]) if cfg_active else pos_embeds
+        if do_classifier_free_guidance:
+            prompt_embeddings = torch.cat([negative_prompt_embeddings, prompt_embeddings])
 
         # 2. IP-Adapter image embeddings
         image_embeds = None
         if condition.ip_adapter_image is not None or condition.ip_adapter_image_embeds is not None:
             image_embeds = self._pipeline.prepare_ip_adapter_image_embeds(
-                condition.ip_adapter_image,
-                condition.ip_adapter_image_embeds,
+                ip_adapter_image=condition.ip_adapter_image,
+                ip_adapter_image_embeds=condition.ip_adapter_image_embeds,
                 device=self.device,
-                batch_size=prompt_embeddings.size(0),
-                do_classifier_free_guidance=cfg_active,
+                num_images_per_prompt=prompt_embeddings.size(
+                    0
+                ),  # fixme batch_size * num_images_per_prompt,
+                do_classifier_free_guidance=do_classifier_free_guidance,
             )
+
+        added_cond_kwargs = {"image_embeds": image_embeds} if image_embeds is not None else None
 
         # 3. Store everything for forward()
         self._conditioning = ConditioningState(
             prompt_embeds=prompt_embeddings,
-            classifier_free_guidance=cfg_active,
+            classifier_free_guidance=do_classifier_free_guidance,
             guidance_scale=condition.guidance_scale,
             cross_attention_kwargs=condition.cross_attention_kwargs,
-            ip_adapter_embeds=image_embeds,
+            add_cond_kwargs=added_cond_kwargs,
         )
 
     def forward(self, latents: torch.Tensor, t: torch.Tensor | int) -> torch.Tensor:
@@ -183,32 +195,34 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         state = self._conditioning
 
         latent_input = torch.cat([latents, latents]) if state.classifier_free_guidance else latents
-        added_cond_kwargs = (
-            {"image_embeds": state.ip_adapter_embeds}
-            if state.ip_adapter_embeds is not None
-            else None
-        )
 
         # Main UNet call.
-        eps = self._unet(
+        noise_pred = self._unet(
             sample=latent_input,
             timestep=t,
             encoder_hidden_states=state.prompt_embeds,
             cross_attention_kwargs=state.cross_attention_kwargs,
-            added_cond_kwargs=added_cond_kwargs,
+            added_cond_kwargs=state.add_cond_kwargs,
         ).sample
 
         # Collapse back to a single batch using the CFG formula.
         if state.classifier_free_guidance:
-            eps_uncond, eps_text = eps.chunk(2)
-            eps = eps_uncond + state.guidance_scale * (eps_text - eps_uncond)
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + state.guidance_scale * (
+                noise_pred_text - noise_pred_uncond
+            )
 
-        return eps
+        # fixme potentially add this one from source code
+        #  if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
+        #      # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
+        #      noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=self.guidance_rescale)
+
+        return noise_pred
 
     @torch.inference_mode()
     def _decode(self, z: torch.Tensor, *, differentiable: bool = True) -> torch.Tensor:
         """Convert latent z → image x using the VAE decoder."""
-        z_scaled = z / self._latent_scaling_factor
+        z_scaled = z / self._vae_latent_multiplier
         with torch.set_grad_enabled(differentiable):
             images = self._vae.decode(z_scaled, return_dict=False)[0]
         return images
@@ -218,7 +232,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         """Convert image x → latent z using the VAE encoder (returns mean)."""
         with torch.set_grad_enabled(differentiable):
             distribution: DiagonalGaussianDistribution = self._vae.encode(x, return_dict=False)[0]
-            z_scaled = distribution.mean * self._latent_scaling_factor
+            z_scaled = distribution.mean * self._vae_latent_multiplier
         return z_scaled
 
     @property

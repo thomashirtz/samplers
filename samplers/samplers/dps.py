@@ -23,30 +23,10 @@ class DPSSampler(PosteriorSampler):
         # initial_noise: Tensor | None = None,
         gamma: float = 1.0,
         eta: float = 1.0,
+        # todo add condition
         *args,
         **kwargs,
     ) -> Tensor:
-        """Run DPS algorithm to solve an inverse problem.
-
-        Args:
-            inverse_problem: The inverse problem to solve, containing the observation,
-                forward operator, and noise model.
-            num_sampling_steps: Number of diffusion timesteps to use for sampling.
-                Fewer steps are faster but may produce lower quality results.
-            num_reconstructions: Number of independent reconstructions to generate.
-                Multiple samples help capture posterior uncertainty.
-            gamma: Step size for the likelihood gradient. Controls the strength of the
-                measurement consistency correction.
-            eta: Parameter for the DDIM step. Values range from 0 (deterministic DDIM)
-                to 1 (stochastic, DDPM-like behavior).
-
-        Returns:
-            Tensor containing reconstructed samples with shape
-            (*batch_shape, num_reconstructions, *x_shape).
-
-        Raises:
-            AttributeError: If the epsilon network is missing required attributes.
-        """
         """Run DPS algorithm to solve an inverse problem.
 
         Args:
