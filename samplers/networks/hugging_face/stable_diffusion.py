@@ -16,7 +16,7 @@ class StableDiffusionCondition:
     prompt: str | list[str] = ""
     negative_prompt: str | list[str] | None = None
     guidance_scale: float = 7.5
-    num_images_per_prompt: int = 1
+    # num_images_per_prompt: int = 1
 
     # optional pre-computed embeddings
     prompt_embeds: torch.Tensor | None = None
@@ -41,6 +41,7 @@ class ConditioningState:
     guidance_scale: float
     cross_attention_kwargs: dict[str, Any] | None
     add_cond_kwargs: dict[str, Any] | None
+    timestep_cond: torch.Tensor | None
 
 
 class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
@@ -121,7 +122,8 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
     def set_condition(self, condition: StableDiffusionCondition | None) -> None:
         # todo add num_reconstructions and batch size to the set_condition
         """Cache prompt / negative-prompt / image embeddings for the next
-        batch.
+        batch. See the __call__ methods of StableDiffusionPipeline for the
+        details.
 
         Parameters
         ----------
@@ -138,6 +140,9 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         #  else:
         #      batch_size = prompt_embeds.shape[0]
 
+        batch_size = 1  # todo add args
+        num_images_per_prompt = 1
+
         # unpack once for readability
         do_classifier_free_guidance = condition.guidance_scale > 1.0
         lora_scale = (
@@ -150,9 +155,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         prompt_embeddings, negative_prompt_embeddings = self._pipeline.encode_prompt(
             prompt=condition.prompt,
             device=self.device,
-            num_images_per_prompt=condition.num_images_per_prompt,
-            # todo how to handle this variable, it is the sampler that has this information, it would be messy to add
-            #  a parameter in the set_condition given by the sampler ..
+            num_images_per_prompt=num_images_per_prompt,
             do_classifier_free_guidance=do_classifier_free_guidance,
             negative_prompt=condition.negative_prompt,
             prompt_embeds=condition.prompt_embeds,
@@ -170,13 +173,28 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
                 ip_adapter_image=condition.ip_adapter_image,
                 ip_adapter_image_embeds=condition.ip_adapter_image_embeds,
                 device=self.device,
-                num_images_per_prompt=prompt_embeddings.size(
-                    0
-                ),  # fixme batch_size * num_images_per_prompt,
+                num_images_per_prompt=batch_size * num_images_per_prompt,
                 do_classifier_free_guidance=do_classifier_free_guidance,
             )
 
-        added_cond_kwargs = {"image_embeds": image_embeds} if image_embeds is not None else None
+        added_cond_kwargs = (
+            {"image_embeds": image_embeds}
+            if (
+                condition.ip_adapter_image is not None
+                or condition.ip_adapter_image_embeds is not None
+            )
+            else None
+        )
+
+        # 6.2 Optionally get Guidance Scale Embedding
+        timestep_cond = None
+        if self._unet.config.time_cond_proj_dim is not None:
+            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(
+                batch_size * num_images_per_prompt
+            )
+            timestep_cond = self.get_guidance_scale_embedding(
+                guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
+            ).to(device=self.device, dtype=self._unet.dtype)
 
         # 3. Store everything for forward()
         self._conditioning = ConditioningState(
@@ -185,6 +203,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
             guidance_scale=condition.guidance_scale,
             cross_attention_kwargs=condition.cross_attention_kwargs,
             add_cond_kwargs=added_cond_kwargs,
+            timestep_cond=timestep_cond,
         )
 
     def forward(self, latents: torch.Tensor, t: torch.Tensor | int) -> torch.Tensor:
@@ -203,6 +222,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
             encoder_hidden_states=state.prompt_embeds,
             cross_attention_kwargs=state.cross_attention_kwargs,
             added_cond_kwargs=state.add_cond_kwargs,
+            timestep_cond=state.timestep_cond,
         ).sample
 
         # Collapse back to a single batch using the CFG formula.
