@@ -21,6 +21,8 @@ def bridge_kernel_statistics(
     # fixme also I tried to avoid having a cumprod f64 in the network to clean it but to see if it is a good idea
 
     alphas_cumprod_f64 = epsilon_net.alphas_cumprod.double()
+    # todo actually instead of saving double float or saving the whole array everytime, just double float the two/three
+    #  values that we will use
 
     alpha_cum_s_to_t = alphas_cumprod_f64[t] / alphas_cumprod_f64[s]
     alpha_cum_t_to_ell = alphas_cumprod_f64[ell] / alphas_cumprod_f64[t]
