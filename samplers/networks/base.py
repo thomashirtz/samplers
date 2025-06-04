@@ -57,6 +57,11 @@ class Network(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNetwork vs
         batch_size: int = 1,
         num_reconstructions: int = 1,
     ):
+        # todo register batch shape and num reconstruction, at inference accept shape
+        #  (*batch_shape, num_reconstruction, sample_shape)
+        #  I think it should not work if batch shape is different, because we condition on the batch size
+        #  (e.g. we give 3 prompts) we expect the output to be a multiple of this
+        #  maybe put _predict_x0 with for minimal one batch size and make it compatible with num_reconustrucion in predict_x0
         self._batch_size = batch_size
         self._num_sampling_steps = num_sampling_steps
         self._num_reconstructions = num_reconstructions
