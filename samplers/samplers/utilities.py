@@ -1,10 +1,18 @@
+from dataclasses import dataclass
+
 import torch
 from torch import Tensor
 
 from samplers.networks.base import Network
 
 
-def bridge_kernel_statistics(
+@dataclass(frozen=True)
+class BridgeStatistics:
+    mean: Tensor
+    std: Tensor
+
+
+def compute_bridge_kernel_statistics(
     x_ell: torch.Tensor,
     x_s: torch.Tensor,
     epsilon_net: Network,
@@ -15,18 +23,15 @@ def bridge_kernel_statistics(
 ):
     """S < t < ell."""
     dtype = x_ell.dtype
-    # todo fix the dtype, I think it is a little bit shady right now
-    # todo maybe give a dtype_computation and dtype_output if dtype output is none it takes the one of x_ell
-    # todo is it really necessary the float64 ?
-    # fixme also I tried to avoid having a cumprod f64 in the network to clean it but to see if it is a good idea
+    alphas_cumprod = epsilon_net.alphas_cumprod
 
-    alphas_cumprod_f64 = epsilon_net.alphas_cumprod.double()
-    # todo actually instead of saving double float or saving the whole array everytime, just double float the two/three
-    #  values that we will use
+    alpha_cumprod_t = alphas_cumprod[t].to(dtype=torch.float64)
+    alpha_cumprod_ell = alphas_cumprod[ell].to(dtype=torch.float64)
+    alpha_cumprod_s = alphas_cumprod[s].to(dtype=torch.float64)
 
-    alpha_cum_s_to_t = alphas_cumprod_f64[t] / alphas_cumprod_f64[s]
-    alpha_cum_t_to_ell = alphas_cumprod_f64[ell] / alphas_cumprod_f64[t]
-    alpha_cum_s_to_ell = alphas_cumprod_f64[ell] / alphas_cumprod_f64[s]
+    alpha_cum_s_to_t = alpha_cumprod_t / alpha_cumprod_s
+    alpha_cum_t_to_ell = alpha_cumprod_ell / alpha_cumprod_t
+    alpha_cum_s_to_ell = alpha_cumprod_ell / alpha_cumprod_s
     bridge_std = (
         eta * ((1 - alpha_cum_t_to_ell) * (1 - alpha_cum_s_to_t) / (1 - alpha_cum_s_to_ell)) ** 0.5
     )
@@ -34,9 +39,11 @@ def bridge_kernel_statistics(
     bridge_coeff_s = (alpha_cum_s_to_t**0.5) - bridge_coeff_ell * (alpha_cum_s_to_ell**0.5)
 
     bridge_mean = bridge_coeff_ell * x_ell + bridge_coeff_s * x_s
-    return bridge_mean.to(dtype=dtype), bridge_std.to(
-        dtype=dtype
-    )  # todo actually I would like to create a container that is called
+
+    return BridgeStatistics(
+        mean=bridge_mean.to(dtype=dtype),
+        std=bridge_std.to(dtype=dtype),
+    )
 
 
 def sample_bridge_kernel(
@@ -48,8 +55,8 @@ def sample_bridge_kernel(
     s: int,
     eta: float = 1.0,
 ):
-    mean, std = bridge_kernel_statistics(x_ell, x_s, epsilon_net, ell, t, s, eta)
-    return mean + std * torch.randn_like(mean)
+    statistics = compute_bridge_kernel_statistics(x_ell, x_s, epsilon_net, ell, t, s, eta)
+    return statistics.mean + statistics.std * torch.randn_like(statistics.mean)
 
 
 def ddim_step(
