@@ -1,13 +1,19 @@
+from typing import Generic, TypeVar
+
+import numpy as np
 import torch
 from torch import Tensor
 from tqdm import trange
 
+from samplers.dtypes import Shape
 from samplers.inverse_problem import InverseProblem
 from samplers.samplers.base import PosteriorSampler
 from samplers.samplers.utilities import ddim_step
 
+Condition_co = TypeVar("Condition_co", covariant=True)
 
-class DPSSampler(PosteriorSampler):
+
+class DPSSampler(PosteriorSampler, Generic[Condition_co]):
     """Diffusion Posterior Sampling for solving inverse problems with diffusion
     models.
 
@@ -20,10 +26,10 @@ class DPSSampler(PosteriorSampler):
         inverse_problem: InverseProblem,
         num_sampling_steps: int = 50,
         num_reconstructions: int = 1,
-        # initial_noise: Tensor | None = None,
         gamma: float = 1.0,
         eta: float = 1.0,
-        # todo add condition
+        condition: Condition_co | None = None,
+        # initial_noise: Tensor | None = None,  # todo
         *args,
         **kwargs,
     ) -> Tensor:
@@ -54,20 +60,21 @@ class DPSSampler(PosteriorSampler):
 
         # --- 1. Setup diffusion model and validation ---
         epsilon_net = self._epsilon_network
-        # Verify that the network provides all necessary functionality
-        for attr in ("set_timesteps", "predict_x0", "timesteps"):
-            if not hasattr(epsilon_net, attr):
-                raise AttributeError(f"epsilon_net is missing required `{attr}`")
-
-        # Configure sampling timesteps
-        epsilon_net.set_timesteps(num_sampling_steps)
+        epsilon_net.set_condition(condition=condition)
+        batch_size = 1
+        epsilon_net.set_sampling_parameters(
+            num_sampling_steps=num_sampling_steps,
+            num_reconstructions=num_reconstructions,
+            batch_size=batch_size,
+        )
 
         # --- 2. Initialize sampling tensors ---
         # Get shape information from the inverse problem
-        x_shape = inverse_problem.operator.x_shape  # Data shape (C,H,W)
-        batch_shape = inverse_problem.batch_shape  # Batch dimensions from observation
-        # Create shape for multiple reconstructions
-        sample_shape = (*batch_shape, num_reconstructions, *x_shape)
+        x_shape: Shape = inverse_problem.operator.x_shape  # Data shape (C,H,W)
+        batch_shape: Shape = inverse_problem.batch_shape  # Batch dimensions from observation
+        leading_shape = (*batch_shape, num_reconstructions)
+        flat_batch = int(np.prod(leading_shape))
+        sample_shape = (flat_batch, *x_shape)
 
         # Start from random noise (standard normal distribution)
         sample = torch.randn(
@@ -89,13 +96,9 @@ class DPSSampler(PosteriorSampler):
             sample.requires_grad_()
 
             # Predict the clean data from the current noisy sample
-            # Flatten batch dimensions for the diffusion model
-            sample_flatten, leading_shape = self._flatten_leading(sample, x_shape=x_shape)
-            sample_flatten.requires_grad_()
+            sample.requires_grad_()
             # Get model prediction of the clean data x_0
-            x_0t_flatten = epsilon_net.predict_x0(sample_flatten, t)
-            # Restore original batch dimensions
-            x_0t = self._unflatten_leading(x_0t_flatten, batch_shape=leading_shape)
+            x_0t = epsilon_net.predict_x0(sample, t)
 
             # Calculate log-likelihood gradient for measurement consistency
             # This guides the sample toward solutions consistent with the observation
@@ -109,7 +112,7 @@ class DPSSampler(PosteriorSampler):
                 t=t,
                 t_prev=t_prev,
                 eta=eta,
-                e_t=x_0t,  # Using predicted clean data for guidance
+                e_t=x_0t,
             )
 
             # Apply measurement consistency correction through gradient ascent
@@ -117,7 +120,6 @@ class DPSSampler(PosteriorSampler):
                 # Calculate the residual norm for adaptive step size scaling
                 residual = inverse_problem.residual(x_0t)
                 error_val = residual.view(sample.shape[0], -1).norm(dim=-1).view(shape)
-
                 # Scale gradient by residual norm (with numerical stability term)
                 scaled_grad = (gamma / (error_val + 1e-9)) * grad_pot
                 # Update sample with the scaled gradient
@@ -126,7 +128,8 @@ class DPSSampler(PosteriorSampler):
         # --- 4. Final clean data prediction ---
         # Get the final denoised sample using the diffusion model
         final_t = int(timesteps[1])
-        x_0t_flatten, leading_shape = self._flatten_leading(sample, x_shape=x_shape)
-        x_hat_flatten = epsilon_net.predict_x0(x_0t_flatten, final_t)
-        x_hat = self._unflatten_leading(x_hat_flatten, batch_shape=leading_shape)
-        return x_hat
+        x0_final_flat = epsilon_net.predict_x0(
+            sample, final_t
+        )  # todo verify it is sample and not xO_t
+        x0_final = x0_final_flat.reshape(*leading_shape, *x_shape)
+        return x0_final
