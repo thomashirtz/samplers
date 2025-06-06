@@ -5,10 +5,11 @@ from diffusers import DDPMPipeline
 from torch import Tensor
 
 from samplers.dtypes import Device, DType
-from samplers.networks import Network
+
+from ..base import Network, NoCondition
 
 
-class DDPMNetwork(Network):
+class DDPMNetwork(Network[NoCondition]):
     def __init__(self, pipeline: DDPMPipeline):
 
         acp = pipeline.scheduler.alphas_cumprod.clip(1e-6, 1)
@@ -38,8 +39,18 @@ class DDPMNetwork(Network):
         return cls(pipeline)
 
     def forward(self, sample: Tensor, t: Tensor | int) -> Tensor:  # noqa: N802
+        if self._num_sampling_steps is None:
+            raise RuntimeError("Call `set_sampling_parameters()` before sampling.")
         return self._model(sample=sample, timestep=t).sample
 
-    def set_timesteps(self, num_sampling_steps: int):
+    def set_sampling_parameters(
+        self,
+        num_sampling_steps: int,
+        batch_size: int = 1,
+        num_reconstructions: int = 1,
+    ):
+        self._batch_size = batch_size
+        self._num_sampling_steps = num_sampling_steps
+        self._num_reconstructions = num_reconstructions
         timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)

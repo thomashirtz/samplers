@@ -16,9 +16,6 @@ class Network(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNetwork vs
         super().__init__()
         alphas_cumprod = alphas_cumprod.clip(1e-6, 1)
         self.register_buffer("alphas_cumprod", alphas_cumprod)
-        # double-precision schedule (for numerically sensitive stats)
-        # self.register_buffer("alphas_cumprod_f64", alphas_cumprod.clone().double())
-        # it was used in samplers.samplers.utilities.bridge_kernel_statistics, but I would prefer to keep network lean.
         self.register_buffer("timesteps", tensor=None, persistent=False)
 
         self._batch_size = None
@@ -76,7 +73,7 @@ class Network(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNetwork vs
     def clear_condition(self): ...
 
 
-class LatentNetwork(Network):
+class LatentNetwork(Network[C], ABC, Generic[C]):
 
     @abstractmethod
     def get_latent_shape(self, x_shape: Shape) -> Shape: ...
