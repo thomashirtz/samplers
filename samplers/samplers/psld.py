@@ -1,5 +1,6 @@
-from typing import Generic, Optional, TypeVar
+from typing import Generic, TypeVar
 
+import numpy as np
 import torch
 from torch import Tensor
 from tqdm import trange
@@ -77,7 +78,7 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
 
         # Check for required network attributes and methods
         required_attrs = [
-            "set_timesteps",
+            "set_timesteps",  # todo find a better way ? maybe just enforce that it is a latent network ?
             "predict_x0",
             "timesteps",
             "encode",
@@ -100,7 +101,11 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
                 "InverseProblem.operator must have 'apply_transpose' method for PSLD."
             )
 
-        epsilon_net.set_timesteps(num_sampling_steps)
+        epsilon_net.set_sampling_parameters(
+            num_sampling_steps=num_sampling_steps,
+            num_reconstructions=num_reconstructions,
+            batch_size=int(np.prod(inverse_problem.operator.batch_shape)),
+        )
         epsilon_net.set_condition(condition)
         latent_shape = epsilon_net.get_latent_shape(inverse_problem.operator.x_shape)
 

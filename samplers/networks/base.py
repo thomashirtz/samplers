@@ -10,22 +10,20 @@ from samplers.dtypes import Shape
 C = TypeVar("C")
 
 
-class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
+class Network(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNetwork vs Denoiser
 
     def __init__(self, alphas_cumprod: Tensor):
         super().__init__()
         alphas_cumprod = alphas_cumprod.clip(1e-6, 1)
         self.register_buffer("alphas_cumprod", alphas_cumprod)
-        # double-precision schedule (for numerically sensitive stats)
-        # self.register_buffer("alphas_cumprod_f64", alphas_cumprod.clone().double())
-        # it was used in samplers.samplers.utilities.bridge_kernel_statistics, but I would prefer to keep network lean.
         self.register_buffer("timesteps", tensor=None, persistent=False)
+
+        self._batch_size = None
+        self._num_sampling_steps = None
+        self._num_reconstructions = None
 
     @abstractmethod
     def forward(self, x: Tensor, t: Tensor | int): ...
-
-    @abstractmethod
-    def set_timesteps(self, num_sampling_steps: int): ...
 
     def predict_x0(self, x: Tensor, t: Tensor | int):
         # todo actually I don't like this naming because it seems like most of the networks are becoming latent,
@@ -49,17 +47,36 @@ class Network(torch.nn.Module, ABC):  # Network vs EpsilonNetwork vs Denoiser
     @abstractmethod
     def from_pretrained(cls, *args, **kwargs): ...
 
+    @abstractmethod
+    def set_sampling_parameters(
+        self,
+        num_sampling_steps: int,
+        batch_size: int = 1,
+        num_reconstructions: int = 1,
+    ):
+        # todo register batch shape and num reconstruction, at inference accept shape
+        #  (*batch_shape, num_reconstruction, sample_shape)
+        #  I think it should not work if batch shape is different, because we condition on the batch size
+        #  (e.g. we give 3 prompts) we expect the output to be a multiple of this
+        #  maybe put _predict_x0 with for minimal one batch size and make it compatible with num_reconustrucion in predict_x0
+        self._batch_size = batch_size
+        self._num_sampling_steps = num_sampling_steps
+        self._num_reconstructions = num_reconstructions
 
-class LatentNetwork(Network, Generic[C]):
+    def clear_sampling_parameters(self):
+        self._batch_size = None
+        self._num_sampling_steps = None
+        self._num_reconstructions = None
+
+    def set_condition(self, condition: C | None) -> None: ...
+
+    def clear_condition(self): ...
+
+
+class LatentNetwork(Network[C], ABC, Generic[C]):
 
     @abstractmethod
     def get_latent_shape(self, x_shape: Shape) -> Shape: ...
-
-    @abstractmethod
-    def set_condition(self, condition: C) -> None:
-        """Store everything needed by the UNet/VAE/etc. as a single object of
-        type C."""
-        ...
 
     def decode(self, z: Tensor, differentiable: bool = True):
         if not differentiable:

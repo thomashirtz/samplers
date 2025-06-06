@@ -113,7 +113,16 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         super().to(dtype=dtype, **device_kwargs)
         return self
 
-    def set_timesteps(self, num_sampling_steps: int):
+    def set_sampling_parameters(
+        self,
+        num_sampling_steps: int,
+        batch_size: int = 1,
+        num_reconstructions: int = 1,
+    ):
+        self._batch_size = batch_size
+        self._num_sampling_steps = num_sampling_steps
+        self._num_reconstructions = num_reconstructions
+
         timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)
         # CGPT said that SDXL is between 0-1111, it proposes:
@@ -139,6 +148,10 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
 
     @torch.inference_mode()
     def set_condition(self, condition: StableDiffusionCondition | None) -> None:
+
+        # todo need to read again the pipeline code in order to make it as close as possible so that it is easily
+        #  maintainable
+
         # todo add num_reconstructions and batch size to the set_condition
         """Cache prompt / negative-prompt / image embeddings for the next
         batch. See the __call__ methods of StableDiffusionPipeline for the
@@ -227,6 +240,10 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
 
     def forward(self, latents: torch.Tensor, t: torch.Tensor | int) -> torch.Tensor:
         """Return ε(xₜ, t) for the given latents and timestep."""
+
+        # todo need to read again the pipeline code in order to make it as close as possible so that it is easily
+        #  maintainable
+
         if self._conditioning is None:
             raise RuntimeError("Call `set_condition()` before sampling.")
 
@@ -281,7 +298,12 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
     @property
     def device(self) -> torch.device:  # noqa: D401
         """Device on which the adapter’s parameters live."""
-        return self.alphas_cumprod.device
+        return self._pipeline.device
+
+    @property
+    def dtype(self) -> torch.dtype:  # noqa: D401
+        """Device on which the adapter’s parameters live."""
+        return self._pipeline.dtype
 
     def clear_condition(self) -> None:
         """Remove cached embeddings to release VRAM."""

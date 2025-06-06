@@ -1,13 +1,19 @@
+from typing import Generic, TypeVar
+
+import numpy as np
 import torch
 from torch import Tensor
 from tqdm import trange
 
+from samplers.dtypes import Shape
 from samplers.inverse_problem import InverseProblem
 from samplers.samplers.base import PosteriorSampler
 from samplers.samplers.utilities import ddim_step
 
+Condition_co = TypeVar("Condition_co", covariant=True)
 
-class DPSSampler(PosteriorSampler):
+
+class DPSSampler(PosteriorSampler, Generic[Condition_co]):
     """Diffusion Posterior Sampling for solving inverse problems with diffusion
     models.
 
@@ -20,10 +26,12 @@ class DPSSampler(PosteriorSampler):
         inverse_problem: InverseProblem,
         num_sampling_steps: int = 50,
         num_reconstructions: int = 1,
-        # initial_noise: Tensor | None = None,
         gamma: float = 1.0,
         eta: float = 1.0,
-        # todo add condition
+        condition: Condition_co | None = None,
+        # initial_noise: Tensor | None = None,  # todo
+        # callback_fn: Callable | None = None,  # todo potential function after each iteration to see what is happening
+        keep_reconstruction_dim: bool = False,
         *args,
         **kwargs,
     ) -> Tensor:
@@ -52,50 +60,44 @@ class DPSSampler(PosteriorSampler):
         if args or kwargs:
             print(f"Warning: Unused args={args}, kwargs={kwargs} in DPSSampler")
 
-        # --- 1. Setup diffusion model and validation ---
-        epsilon_net = self._epsilon_network
-        # Verify that the network provides all necessary functionality
-        for attr in ("set_timesteps", "predict_x0", "timesteps"):
-            if not hasattr(epsilon_net, attr):
-                raise AttributeError(f"epsilon_net is missing required `{attr}`")
-
-        # Configure sampling timesteps
-        epsilon_net.set_timesteps(num_sampling_steps)
-
         # --- 2. Initialize sampling tensors ---
         # Get shape information from the inverse problem
-        x_shape = inverse_problem.operator.x_shape  # Data shape (C,H,W)
-        batch_shape = inverse_problem.batch_shape  # Batch dimensions from observation
-        # Create shape for multiple reconstructions
-        sample_shape = (*batch_shape, num_reconstructions, *x_shape)
+        x_shape: Shape = inverse_problem.operator.x_shape  # Data shape (C,H,W)
+        batch_shape: Shape = inverse_problem.batch_shape  # Batch dimensions from observation
+        batch_size = int(np.prod(batch_shape))
+        leading_shape = (*batch_shape, num_reconstructions)
+        flat_batch = int(batch_size * num_reconstructions)
+
+        # --- 1. Setup diffusion model and validation ---
+        epsilon_net = self._epsilon_network
+        epsilon_net.set_sampling_parameters(
+            num_sampling_steps=num_sampling_steps,
+            num_reconstructions=num_reconstructions,
+            batch_size=batch_size,
+        )
+        epsilon_net.set_condition(condition=condition)
 
         # Start from random noise (standard normal distribution)
+        sample_shape = (flat_batch, *x_shape)
         sample = torch.randn(
             size=sample_shape,
             device=epsilon_net.device,
             dtype=epsilon_net.dtype,
         )
 
-        # Create a shape for broadcasting error values correctly
-        shape = (sample.shape[0], *(1,) * len(sample.shape[1:]))
-        timesteps = epsilon_net.timesteps
-
         # --- 3. Sampling Loop (reverse diffusion process with likelihood guidance) ---
+        timesteps = epsilon_net.timesteps
         for i in trange(len(timesteps) - 1, 1, -1):
-            t = int(timesteps[i])  # Current timestep
-            t_prev = int(timesteps[i - 1])  # Next timestep (going backward)
+            timestep = int(timesteps[i])  # Current timestep
+            timestep_prev = int(timesteps[i - 1])  # Next timestep (going backward)
 
             # Enable gradient computation for the current noisy sample
             sample.requires_grad_()
 
             # Predict the clean data from the current noisy sample
-            # Flatten batch dimensions for the diffusion model
-            sample_flatten, leading_shape = self._flatten_leading(sample, x_shape=x_shape)
-            sample_flatten.requires_grad_()
+            sample.requires_grad_()
             # Get model prediction of the clean data x_0
-            x_0t_flatten = epsilon_net.predict_x0(sample_flatten, t)
-            # Restore original batch dimensions
-            x_0t = self._unflatten_leading(x_0t_flatten, batch_shape=leading_shape)
+            x_0t = epsilon_net.predict_x0(sample, timestep)
 
             # Calculate log-likelihood gradient for measurement consistency
             # This guides the sample toward solutions consistent with the observation
@@ -106,17 +108,21 @@ class DPSSampler(PosteriorSampler):
             sample = ddim_step(
                 x=sample.detach(),  # Detach to prevent gradient accumulation
                 epsilon_net=epsilon_net,
-                t=t,
-                t_prev=t_prev,
+                t=timestep,
+                t_prev=timestep_prev,
                 eta=eta,
-                e_t=x_0t,  # Using predicted clean data for guidance
+                e_t=x_0t,
             )
 
             # Apply measurement consistency correction through gradient ascent
             with torch.no_grad():
                 # Calculate the residual norm for adaptive step size scaling
                 residual = inverse_problem.residual(x_0t)
-                error_val = residual.view(sample.shape[0], -1).norm(dim=-1).view(shape)
+
+                # Pick every axis **except** the batch axis (dim 0)
+                reduce_axes = tuple(range(1, residual.ndim))  # e.g. (1, 2, 3) for (B, C, H, W)
+                # Take the L2-norm over those axes, but keep them as length-1 dims
+                error_val = torch.linalg.vector_norm(residual, dim=reduce_axes, keepdim=True)
 
                 # Scale gradient by residual norm (with numerical stability term)
                 scaled_grad = (gamma / (error_val + 1e-9)) * grad_pot
@@ -125,8 +131,9 @@ class DPSSampler(PosteriorSampler):
 
         # --- 4. Final clean data prediction ---
         # Get the final denoised sample using the diffusion model
-        final_t = int(timesteps[1])
-        x_0t_flatten, leading_shape = self._flatten_leading(sample, x_shape=x_shape)
-        x_hat_flatten = epsilon_net.predict_x0(x_0t_flatten, final_t)
-        x_hat = self._unflatten_leading(x_hat_flatten, batch_shape=leading_shape)
-        return x_hat
+        final_timestep = int(timesteps[1])
+        x0_final_flat = epsilon_net.predict_x0(x=sample, t=final_timestep)
+        x0_final = x0_final_flat.reshape(*leading_shape, *x_shape)
+        if num_reconstructions == 1 and not keep_reconstruction_dim:
+            x0_final = x0_final.squeeze(len(batch_shape))
+        return x0_final
