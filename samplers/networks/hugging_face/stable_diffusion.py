@@ -17,7 +17,7 @@ class StableDiffusionCondition:
     prompt: str | list[str] = ""
     negative_prompt: str | list[str] | None = None
     guidance_scale: float = 7.5
-    # num_images_per_prompt: int = 1
+    guidance_rescale: float = 0.0
 
     # optional pre-computed embeddings
     prompt_embeds: torch.Tensor | None = None
@@ -40,6 +40,7 @@ class ConditioningState:
     prompt_embeds: torch.Tensor
     do_classifier_free_guidance: bool
     guidance_scale: float
+    guidance_rescale: float
     cross_attention_kwargs: dict[str, Any] | None
     add_cond_kwargs: dict[str, Any] | None
     timestep_cond: torch.Tensor | None
@@ -236,6 +237,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
             cross_attention_kwargs=condition.cross_attention_kwargs,
             add_cond_kwargs=added_cond_kwargs,
             timestep_cond=timestep_cond,
+            guidance_rescale=condition.guidance_rescale,
         )
 
     def forward(self, latents: torch.Tensor, t: torch.Tensor | int) -> torch.Tensor:
@@ -271,10 +273,10 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
                 noise_pred_text - noise_pred_uncond
             )
 
-        if state.do_classifier_free_guidance and self._pipeline.guidance_rescale > 0.0:
+        if state.do_classifier_free_guidance and state.guidance_rescale > 0.0:
             # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
             noise_pred = rescale_noise_cfg(
-                noise_pred, noise_pred_text, guidance_rescale=self._pipeline.guidance_rescale
+                noise_pred, noise_pred_text, guidance_rescale=state.guidance_rescale
             )
 
         return noise_pred
