@@ -1,5 +1,4 @@
 import torch
-from diffusers import StableDiffusionPipeline
 from PIL import Image
 
 from samplers.config import MODELS_DIRECTORY
@@ -14,22 +13,24 @@ if __name__ == "__main__":
 
     dtype = torch.bfloat16
     device = "cuda:0"
+
     model_id = "sd-legacy/stable-diffusion-v1-5"
     network = StableDiffusionNetwork.from_pretrained(
         model_id, torch_dtype=dtype, cache_dir=MODELS_DIRECTORY, device=device
     )
-    # pipe = pipe.to("cuda")
 
     image = Image.open("ddpm.png")
+    x_shape = pil_to_tensor(image).shape
+
     x_true = pil_to_tensor(image)
-    x_true = torch.stack((x_true, x_true)).to(device=device, dtype=dtype)
+    # x_true = torch.stack((x_true, x_true)).to(device=device, dtype=dtype)
     # x_true = torch.ones((3, 256, 256), dtype=dtype)
 
-    operator = IdentityOperator(x_shape=(3, 256, 256))
+    operator = IdentityOperator(x_shape=x_shape)
     noise = GaussianNoise(sigma=0.05)
 
     inverse_problem = InverseProblem.from_clean_data(
-        x_true=x_true,
+        x_true=x_true.to(device=device, dtype=dtype),
         noise=noise,
         operator=operator,
     )

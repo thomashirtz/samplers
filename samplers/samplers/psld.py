@@ -5,10 +5,13 @@ import torch
 from torch import Tensor
 from tqdm import trange
 
+from samplers.dtypes import Shape
 from samplers.inverse_problem import InverseProblem
 from samplers.networks import LatentNetwork
 from samplers.samplers.base import PosteriorSampler
-from samplers.samplers.utilities import ddim_step
+
+from .utils.batch_view import BatchView
+from .utils.bridge_kernels import ddim_step
 
 Condition_co = TypeVar("Condition_co", covariant=True)
 
@@ -32,6 +35,7 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
 
     def __init__(self, network):
         super().__init__(network)
+
         if not isinstance(self._epsilon_network, LatentNetwork):
             raise TypeError(
                 f"{self.__class__.__name__} requires a latent diffusion model, "
@@ -42,6 +46,7 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
     def __call__(
         self,
         inverse_problem: InverseProblem,
+        *,
         num_sampling_steps: int = 100,
         num_reconstructions: int = 1,
         gamma: float = 1.0,
@@ -49,133 +54,108 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
         eta: float = 1.0,
         decode_output: bool = True,
         condition: Condition_co | None = None,
-        *args,
-        **kwargs,
     ) -> Tensor:
-        """Executes the PSLDSampler.
+        """Run PSLD and return Monte‑Carlo reconstructions.
 
         Parameters
         ----------
-        inverse_problem : InverseProblem
-            The definition of the inverse problem, including observation,
-            operator, and noise model.
-        num_sampling_steps : int, default 100
-            The number of timesteps for the diffusion sampling process.
-        num_reconstructions : int, default 1
-            The number of reconstructions to generate.
-        gamma : float, default 1.0
-            Stepsize for the gluing constraint (referred to as eta in Algorithm 2).
-        omega : float, default 0.1
-            Stepsize for the likelihood constraint (referred to as gamma in Algorithm 2).
-        eta : float, default 1.0
-            The eta parameter for the DDIM step (0 for DDIM, 1 for DDPM-like).
+        inverse_problem
+            Specification containing the forward operator ``H`` and
+            observation ``y``.
+        num_sampling_steps
+            Number of diffusion steps *T*.
+        num_reconstructions
+            Independent posterior samples to draw per observation.
+        gamma, omega
+            Step sizes for the gluing and likelihood penalties.
+        eta
+            DDIM stochasticity (0 = deterministic, 1 = DDPM‑like).
+        decode_output
+            If *True*, return images in observation space.  Otherwise return
+            the corresponding latent codes :math:`z_0`.
+        condition
+            Optional conditioning passed through to ``epsilon_network``.
         """
-        if args or kwargs:
-            print(f"Warning: Unused args={args}, kwargs={kwargs} in PSLDSampler")
 
-        # --- 2. Setup ---
+        # 1.  Shape bookkeeping via two BatchViews
+        x_shape: Shape = inverse_problem.operator.x_shape  # (C, H, W)
+        batch_shape: Shape = inverse_problem.batch_shape  # (*B,)
+
+        x_view = BatchView(batch_shape, num_reconstructions, x_shape)
+
         epsilon_net: LatentNetwork = self._epsilon_network
+        latent_shape: Shape = epsilon_net.get_latent_shape(x_shape)
+        z_view = BatchView(batch_shape, num_reconstructions, latent_shape)
 
-        # Check for required network attributes and methods
-        required_attrs = [
-            "set_timesteps",  # todo find a better way ? maybe just enforce that it is a latent network ?
-            "predict_x0",
-            "timesteps",
-            "encode",
-            "decode",
-            "get_latent_shape",
-            "device",
-            "dtype",
-        ]
-        for attr in required_attrs:
-            if not hasattr(epsilon_net, attr):
-                raise AttributeError(
-                    f"epsilon_net is missing required `{attr}`. "
-                    f"PSLDSampler requires a network with both diffusion "
-                    f"and latent (encode/decode/latent_shape) capabilities."
-                )
+        flat_batch_size: int = z_view.leading_size  # |B| · R
 
-        # Check for required operator methods
-        if not hasattr(inverse_problem.operator, "apply_transpose"):
-            raise AttributeError(
-                "InverseProblem.operator must have 'apply_transpose' method for PSLD."
-            )
-
+        # 2.  Network setup (identical to DPS)
         epsilon_net.set_sampling_parameters(
             num_sampling_steps=num_sampling_steps,
             num_reconstructions=num_reconstructions,
-            batch_size=int(np.prod(inverse_problem.operator.batch_shape)),
+            batch_size=x_view.batch_size,
         )
         epsilon_net.set_condition(condition)
-        latent_shape = epsilon_net.get_latent_shape(inverse_problem.operator.x_shape)
 
-        # Initialize latent noise z_T
-        shape = (num_reconstructions, *latent_shape)
-        z_t = torch.randn(
-            size=shape,
+        # 3.  Initialise latent noise z_T
+        z_t: Tensor = torch.randn(
+            (flat_batch_size, *latent_shape),
             device=epsilon_net.device,
             dtype=epsilon_net.dtype,
         )
 
-        timesteps = epsilon_net.timesteps
-        obs = inverse_problem.observation
+        # 4.  Pre‑compute constants
+        timesteps = epsilon_net.timesteps  # list[int]
+
+        observation_flat: Tensor = x_view.repeat_observation(inverse_problem.observation)
         operator = inverse_problem.operator
+        H_transpose_observation_flat: Tensor = x_view.repeat_observation(
+            operator.apply_transpose(inverse_problem.observation)
+        )
 
-        # Precompute H_transpose(y)
-        Ht_obs = operator.apply_transpose(obs)
-
-        # --- 3. Sampling Loop ---
+        # 5.  Reverse diffusion loop
         for i in trange(len(timesteps) - 1, 1, -1):
-            t = timesteps[i]
-            t_prev = timesteps[i - 1]
-            t_tensor = torch.full((z_t.shape[0],), t, device=z_t.device, dtype=torch.long)
-            t_prev_tensor = torch.full((z_t.shape[0],), t_prev, device=z_t.device, dtype=torch.long)
+            timestep: int = int(timesteps[i])
+            timestep_previous: int = int(timesteps[i - 1])
 
             z_t.requires_grad_()
 
-            # Predict z0 using the diffusion model
-            z_0t = epsilon_net.predict_x0(z_t, t_tensor)
+            # --- 5a.  Network predictions
+            z0_prediction: Tensor = epsilon_net.predict_x0(z_t, timestep)
+            x0_prediction: Tensor = epsilon_net.decode(z0_prediction)
 
-            # Decode z0 to x0 (image space)
-            decoded_z_0t = epsilon_net.decode(z_0t)
+            # --- 5b.  Data‑consistency penalties
+            H_x0_prediction: Tensor = operator.apply(x0_prediction)
+            likelihood_error: Tensor = torch.norm(observation_flat - H_x0_prediction)
 
-            # Apply operator H(x0)
-            H_decoded_z_0t = operator.apply(decoded_z_0t)
+            x_effective: Tensor = (
+                H_transpose_observation_flat
+                + x0_prediction
+                - operator.apply_transpose(H_x0_prediction)
+            )
+            z_effective: Tensor = epsilon_net.encode(x_effective)
+            gluing_error: Tensor = torch.norm(z0_prediction - z_effective)
 
-            # Calculate likelihood error ||y - H(x0)||_2
-            ll_error = torch.norm(obs - H_decoded_z_0t)
+            total_error: Tensor = omega * likelihood_error + gamma * gluing_error
+            (gradient,) = torch.autograd.grad(total_error, z_t)
 
-            # Calculate gluing error ||z0 - E(Ht(y) + x0 - Ht(H(x0)))||_2
-            x_eff = Ht_obs + decoded_z_0t - operator.apply_transpose(H_decoded_z_0t)
-            encoded_x_eff = epsilon_net.encode(x_eff)
-            gluing_error = torch.norm(z_0t - encoded_x_eff)
-
-            # Total error and gradient calculation
-            error = omega * ll_error + gamma * gluing_error
-            grad = torch.autograd.grad(error, z_t)[0]
-
-            # --- Perform update ---
+            # --- 5c.  DDIM step followed by gradient correction
             with torch.no_grad():
-                # DDIM update step (using z_0t as e_t, similar to DPS and original PSLD)
                 z_t = ddim_step(
                     x=z_t.detach(),
                     epsilon_net=epsilon_net,
-                    t=t_tensor,
-                    t_prev=t_prev_tensor,
+                    t=timestep,
+                    t_prev=timestep_previous,
                     eta=eta,
-                    e_t=z_0t,
+                    e_t=z0_prediction,
                 )
-                # Gradient correction step
-                z_t = z_t - grad
+                z_t = z_t - gradient
 
-        # --- 4. Final Prediction ---
-        # Get the final z0 prediction at the second to last timestep
-        final_t = torch.full((z_t.shape[0],), timesteps[1], device=z_t.device, dtype=torch.long)
-        final_z0 = epsilon_net.predict_x0(z_t, final_t)
+        # 6.  Final prediction at timestep 1 (t₁)
+        final_z0: Tensor = epsilon_net.predict_x0(z_t, int(timesteps[1]))
 
-        # Decode the final latent prediction to get the image x0
-
+        # 7.  Decode and restore structured view
         if decode_output:
-            return epsilon_net.decode(final_z0, differentiable=False)
-        else:
-            return final_z0
+            x0_output: Tensor = epsilon_net.decode(final_z0, differentiable=False)
+            return x_view.unflatten(x0_output)
+        return z_view.unflatten(final_z0)
