@@ -3,7 +3,7 @@ from PIL import Image
 
 from samplers.config import MODELS_DIRECTORY
 from samplers.inverse_problem import InverseProblem
-from samplers.networks import StableDiffusionNetwork
+from samplers.networks import StableDiffusionCondition, StableDiffusionNetwork
 from samplers.noise import GaussianNoise
 from samplers.operators import IdentityOperator
 from samplers.samplers import PSLDSampler
@@ -21,9 +21,9 @@ if __name__ == "__main__":
 
     image = Image.open("ddpm.png")
     x_shape = pil_to_tensor(image).shape
-
+    batch_size = 2
     x_true = pil_to_tensor(image)
-    # x_true = torch.stack((x_true, x_true)).to(device=device, dtype=dtype)
+    x_true = torch.stack((x_true,) * batch_size).to(device=device, dtype=dtype)
     # x_true = torch.ones((3, 256, 256), dtype=dtype)
 
     operator = IdentityOperator(x_shape=x_shape)
@@ -34,8 +34,14 @@ if __name__ == "__main__":
         noise=noise,
         operator=operator,
     )
+    condition = StableDiffusionCondition(prompt=[""] * batch_size)
 
     sampler = PSLDSampler(network=network)
-    x_hat = sampler(inverse_problem=inverse_problem, num_sampling_steps=4)
+    x_hat = sampler(
+        inverse_problem=inverse_problem,
+        num_sampling_steps=4,
+        num_reconstructions=2,
+        condition=condition,
+    )
     sample = tensor_to_pil(x_hat[0, 0])
     sample.save("dps.jpg")

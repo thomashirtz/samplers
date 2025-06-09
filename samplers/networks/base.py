@@ -78,7 +78,7 @@ class LatentNetwork(Network[C], ABC, Generic[C]):
     @abstractmethod
     def get_latent_shape(self, x_shape: Shape) -> Shape: ...
 
-    def decode(self, z: Tensor, differentiable: bool = True):
+    def decode(self, z: Tensor, differentiable: bool = False):
         if not differentiable:
             with torch.no_grad():
                 out = self._decode(z=z)
@@ -89,7 +89,7 @@ class LatentNetwork(Network[C], ABC, Generic[C]):
     @abstractmethod
     def _decode(self, z: Tensor): ...
 
-    def encode(self, x: Tensor, differentiable: bool = True):
+    def encode(self, x: Tensor, differentiable: bool = False):
         if not differentiable:
             with torch.no_grad():
                 out = self._encode(x=x)

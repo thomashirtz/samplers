@@ -129,4 +129,6 @@ class DPSSampler(PosteriorSampler, Generic[Condition_co]):
         if num_reconstructions == 1 and not keep_reconstruction_dim:
             x0_final = x0_final.squeeze(len(batch_shape))
 
+        epsilon_net.clear_condition()
+        epsilon_net.clear_sampling_parameters()
         return x0_final

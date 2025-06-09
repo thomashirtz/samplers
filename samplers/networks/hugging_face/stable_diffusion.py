@@ -13,7 +13,7 @@ from samplers.networks import LatentNetwork
 
 @dataclasses.dataclass(slots=True)
 class StableDiffusionCondition:
-    # textual guidance
+    # guidance
     prompt: str | list[str] = ""
     negative_prompt: str | list[str] | None = None
     guidance_scale: float = 7.5
@@ -69,24 +69,22 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
     """
 
     def __init__(self, pipeline: StableDiffusionPipeline) -> None:
-        betas = pipeline.scheduler.betas
-        acp = (1.0 - betas).cumprod(dim=0).to(dtype=pipeline.dtype, device=pipeline.device)
-        one = torch.tensor([1.0], dtype=pipeline.dtype, device=pipeline.device)
-        alpha_cumprods = torch.cat([one, acp])
-
-        super().__init__(alphas_cumprod=alpha_cumprods)
+        acp = pipeline.scheduler.alphas_cumprod
+        one = acp.new_tensor([1.0])
+        alphas_cumprod = torch.cat([one, acp])
+        super().__init__(alphas_cumprod=alphas_cumprod)
 
         self._conditioning: ConditioningState | None = None
         self._pipeline: StableDiffusionPipeline = pipeline
-        self._unet: UNet2DConditionModel = pipeline.unet.eval().requires_grad_(False)
-        self._vae: AutoencoderKL = pipeline.vae.eval().requires_grad_(False)
+        self._pipeline.unet.eval().requires_grad_(False)
+        self._pipeline.vae.eval().requires_grad_(False)
 
         # The factor by which the VAE multiplies its latent tensors
-        self._vae_latent_multiplier = pipeline.vae.config.scaling_factor
+        self._vae_latent_multiplier = self._vae.config.scaling_factor
         # The ratio by which the latent’s spatial dimensions are scaled
-        self.latent_resolution_ratio = pipeline.vae_scale_factor
+        self.latent_resolution_ratio = self._vae_scale_factor
         # The number of channels contained in each latent tensor
-        self.latent_num_channels = pipeline.vae.config.latent_channels
+        self.latent_num_channels = self._vae.config.latent_channels
 
     @classmethod
     def from_pretrained(
@@ -106,12 +104,15 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         pipeline = pipeline.to(device)
         return cls(pipeline=pipeline)
 
-    def to(self, device: torch.device | str | None = None, dtype: torch.dtype | None = None):
-        # _pipeline is not a nn.Module, therefore anything below _pipeline won't be move by the default .to.
-        # The .to has therefore been extended to move the pipeline as well.
-        device_kwargs = dict(device=device) if device else {}
-        self._pipeline = self._pipeline.to(dtype=dtype, **device_kwargs)
-        super().to(dtype=dtype, **device_kwargs)
+    def to(
+        self,
+        device: torch.device | str | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        device = torch.device(device) if device is not None else self.device
+        dtype = dtype if dtype is not None else self.dtype
+        super().to(device=device, dtype=dtype)
+        self._pipeline = self._pipeline.to(device=device, dtype=dtype)
         return self
 
     def set_sampling_parameters(
@@ -119,22 +120,16 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         num_sampling_steps: int,
         batch_size: int = 1,
         num_reconstructions: int = 1,
+        # height: int,
+        # width: int,
     ):
         self._batch_size = batch_size
         self._num_sampling_steps = num_sampling_steps
         self._num_reconstructions = num_reconstructions
 
-        timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)
+        self._pipeline.scheduler.set_timesteps(num_sampling_steps, device=self.device)
+        timesteps = self._pipeline.scheduler.timesteps
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)
-        # CGPT said that SDXL is between 0-1111, it proposes:
-        # self._pipeline.scheduler.set_timesteps(num_sampling_steps, device=self.device)
-        # self.register_buffer("timesteps",
-        #                      self._pipeline.scheduler.timesteps.to(torch.long),
-        #                      persistent=True)
-        # todo need to check if it works
-        # Hard-coding 0‒999 still breaks SDXL (0‒1111) and any custom scheduler.
-        # The two-liner you commented out is the robust solution – just remember that many schedulers keep the dtype
-        # as float, so don’t cast to long unless your sampler insists on it.
 
     def get_latent_shape(self, x_shape: Shape) -> Shape:
         channel, height, width = x_shape
@@ -149,43 +144,85 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
 
     @torch.inference_mode()
     def set_condition(self, condition: StableDiffusionCondition | None) -> None:
+        """Prepare and cache every tensor the UNet needs for the next denoising
+        pass.
 
-        # todo need to read again the pipeline code in order to make it as close as possible so that it is easily
-        #  maintainable
-
-        # todo add num_reconstructions and batch size to the set_condition
-        """Cache prompt / negative-prompt / image embeddings for the next
-        batch. See the __call__ methods of StableDiffusionPipeline for the
-        details.
+        The implementation purposefully mirrors
+        :pymeth:`diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.__call__`:
+        the only differences are that *self* has been replaced by the internal
+        pipeline (``self._pipeline``) and that the many keyword arguments have
+        been collected in a single :class:`~StableDiffusionCondition` object.
 
         Parameters
         ----------
-        condition : StableDiffusionCondition
-            The conditioning specification created by the caller.
+        condition : StableDiffusionCondition | None
+            A bundle of textual and/or image prompts as well as CFG parameters.
+            If *None*, an empty ``StableDiffusionCondition()`` is used which
+            yields unconditional generation.
         """
+        if self.is_sampling_initialized:
+            raise RuntimeError("Call `set_sampling_parameters()` before conditioning.")
+
         condition = condition if condition is not None else StableDiffusionCondition()
 
-        # fixme number of sample in the original code:
-        #  if prompt is not None and isinstance(prompt, str):
-        #      batch_size = 1
-        #  elif prompt is not None and isinstance(prompt, list):
-        #      batch_size = len(prompt)
-        #  else:
-        #      batch_size = prompt_embeds.shape[0]
+        # 1. Check inputs. Raise error if not correct
+        self._pipeline.check_inputs(
+            prompt=condition.prompt,
+            negative_prompt=condition.negative_prompt,
+            prompt_embeds=condition.prompt_embeds,
+            negative_prompt_embeds=condition.negative_prompt_embeds,
+            ip_adapter_image=condition.ip_adapter_image,
+            ip_adapter_image_embeds=condition.ip_adapter_image_embeds,
+            # Height/width are checked in the original pipeline; here we pass
+            # dummy values because the sampler controls the latent resolution.
+            # In the future maybe height and width will be set (e.g. in
+            # set_sampling_parameters or here) and checked.
+            height=8,
+            width=8,
+            callback_steps=None,
+        )
 
-        batch_size = 1  # todo add args
-        num_images_per_prompt = 1
+        self._pipeline._guidance_scale = (
+            condition.guidance_scale
+        )  # needed to call self._pipeline.do_classifier_free_guidance
+        self._pipeline._guidance_rescale = condition.guidance_rescale
+        self._pipeline._clip_skip = condition.clip_skip
+        self._pipeline._cross_attention_kwargs = condition.cross_attention_kwargs
+        self._pipeline._interrupt = False
 
-        # unpack once for readability
-        do_classifier_free_guidance = condition.guidance_scale > 1.0
+        # 2. Define call parameters
+        if condition.prompt is not None and isinstance(condition.prompt, str):
+            batch_size = 1
+        elif condition.prompt is not None and isinstance(condition.prompt, list):
+            batch_size = len(condition.prompt)
+        else:
+            batch_size = condition.prompt_embeds.shape[0]
+
+        if batch_size != self._batch_size:
+            raise ValueError(
+                "Batch size mismatch: received "
+                f"{batch_size} prompt(s) but the sampler was initialised with "
+                f"batch_size={self._batch_size}.\n\n"
+                "How to fix this: either\n"
+                " • supply exactly this number of prompts/embeddings, OR\n"
+                " • call 'set_sampling_parameters' again with the desired batch_size.\n\n"
+                "Hint: to generate multiple images in one go, pass a *list* of prompts "
+                "— e.g. ['prompt-1', 'prompt-2', ...]."
+            )
+        num_images_per_prompt = self._num_reconstructions
+
+        # In the future we might implement an `always_cfg` flag to force classic two-pass CFG even when time_cond_proj_dim ≠ None.
+        # That would let us compare guidance strength on LCM-style UNets and avoid silent CFG disable when swapping models.
+        do_classifier_free_guidance = self._pipeline.do_classifier_free_guidance
+
+        # 3. Encode input prompt
         lora_scale = (
-            condition.cross_attention_kwargs.get("scale")
-            if condition.cross_attention_kwargs
+            self._pipeline.cross_attention_kwargs.get("scale", None)
+            if self._pipeline.cross_attention_kwargs is not None
             else None
         )
 
-        # 1. Text embeddings
-        prompt_embeddings, negative_prompt_embeddings = self._pipeline.encode_prompt(
+        prompt_embeds, negative_prompt_embeds = self._pipeline.encode_prompt(
             prompt=condition.prompt,
             device=self.device,
             num_images_per_prompt=num_images_per_prompt,
@@ -194,13 +231,16 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
             prompt_embeds=condition.prompt_embeds,
             negative_prompt_embeds=condition.negative_prompt_embeds,
             lora_scale=lora_scale,
-            clip_skip=condition.clip_skip,
+            clip_skip=self._pipeline.clip_skip,
         )
+
+        # For classifier free guidance, we need to do two forward passes.
+        # Here we concatenate the unconditional and text embeddings into a single batch
+        # to avoid doing two forward passes
         if do_classifier_free_guidance:
-            prompt_embeddings = torch.cat([negative_prompt_embeddings, prompt_embeddings])
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
 
         # 2. IP-Adapter image embeddings
-        image_embeds = None
         if condition.ip_adapter_image is not None or condition.ip_adapter_image_embeds is not None:
             image_embeds = self._pipeline.prepare_ip_adapter_image_embeds(
                 ip_adapter_image=condition.ip_adapter_image,
@@ -210,6 +250,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
                 do_classifier_free_guidance=do_classifier_free_guidance,
             )
 
+        # 6.1 Add image embeds for IP-Adapter
         added_cond_kwargs = (
             {"image_embeds": image_embeds}
             if (
@@ -221,17 +262,20 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
 
         # 6.2 Optionally get Guidance Scale Embedding
         timestep_cond = None
-        if self._unet.config.time_cond_proj_dim is not None:
-            guidance_scale_tensor = torch.tensor(condition.guidance_scale - 1).repeat(
+        if (
+            self._pipeline.unet.config.time_cond_proj_dim is not None
+        ):  # not sure which unet to choose here
+            guidance_scale_tensor = torch.tensor(self._pipeline.guidance_scale - 1).repeat(
                 batch_size * num_images_per_prompt
             )
             timestep_cond = self._pipeline.get_guidance_scale_embedding(
-                guidance_scale_tensor, embedding_dim=self._unet.config.time_cond_proj_dim
-            ).to(device=self.device, dtype=self._unet.dtype)
+                guidance_scale_tensor,
+                embedding_dim=self._pipeline.unet.config.time_cond_proj_dim,  # not sure which unet to choose here
+            ).to(device=self._pipeline.device, dtype=self._pipeline.dtype)
 
         # 3. Store everything for forward()
         self._conditioning = ConditioningState(
-            prompt_embeds=prompt_embeddings,
+            prompt_embeds=prompt_embeds,
             do_classifier_free_guidance=do_classifier_free_guidance,
             guidance_scale=condition.guidance_scale,
             cross_attention_kwargs=condition.cross_attention_kwargs,
@@ -243,10 +287,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
     def forward(self, latents: torch.Tensor, t: torch.Tensor | int) -> torch.Tensor:
         """Return ε(xₜ, t) for the given latents and timestep."""
 
-        # todo need to read again the pipeline code in order to make it as close as possible so that it is easily
-        #  maintainable
-
-        if self._conditioning is None:
+        if self.is_condition_initialized:
             raise RuntimeError("Call `set_condition()` before sampling.")
 
         state = self._conditioning
@@ -282,7 +323,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         return noise_pred
 
     @torch.inference_mode()
-    def _decode(self, z: torch.Tensor, *, differentiable: bool = True) -> torch.Tensor:
+    def _decode(self, z: torch.Tensor, *, differentiable: bool = False) -> torch.Tensor:
         """Convert latent z → image x using the VAE decoder."""
         z_scaled = z / self._vae_latent_multiplier
         with torch.set_grad_enabled(differentiable):
@@ -290,7 +331,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         return images
 
     @torch.inference_mode()
-    def _encode(self, x: torch.Tensor, *, differentiable: bool = True) -> torch.Tensor:
+    def _encode(self, x: torch.Tensor, *, differentiable: bool = False) -> torch.Tensor:
         """Convert image x → latent z using the VAE encoder (returns mean)."""
         with torch.set_grad_enabled(differentiable):
             distribution: DiagonalGaussianDistribution = self._vae.encode(x, return_dict=False)[0]
@@ -307,16 +348,26 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         """Device on which the adapter’s parameters live."""
         return self._pipeline.dtype
 
+    @property
+    def _unet(self) -> UNet2DConditionModel:  # code elsewhere still uses self._unet
+        return self._pipeline.unet
+
+    @property
+    def _vae(self) -> AutoencoderKL:
+        return self._pipeline.vae
+
     def clear_condition(self) -> None:
         """Remove cached embeddings to release VRAM."""
         self._conditioning = None
         torch.cuda.empty_cache()
 
-    # CGPT suggestions:
-    def enable_sequential_cpu_offload(self, **kwargs):
-        self._pipeline.enable_sequential_cpu_offload(**kwargs)
-        return self
+    @property
+    def is_condition_initialized(self) -> bool:
+        """True if `set_condition()` has been called and embeddings are
+        cached."""
+        return self._conditioning is not None
 
-    def enable_xformers_memory_efficient_attention(self, **kwargs):
-        self._pipeline.enable_xformers_memory_efficient_attention(**kwargs)
-        return self
+    @property
+    def is_sampling_initialized(self) -> bool:
+        """True if `set_sampling_parameters()` has been called."""
+        return self._batch_size is not None
