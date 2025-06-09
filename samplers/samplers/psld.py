@@ -69,7 +69,7 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
         gamma, omega
             Step sizes for the gluing and likelihood penalties.
         eta
-            DDIM stochasticity (0 = deterministic, 1 = DDPM‑like).
+            DDIM stochasticity (0 = deterministic, 1 = DDPM‑like).
         decode_output
             If *True*, return images in observation space.  Otherwise return
             the corresponding latent codes :math:`z_0`.
@@ -89,7 +89,8 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
 
         flat_batch_size: int = z_view.leading_size  # |B| · R
 
-        # 2.  Network setup (identical to DPS)
+        # 2.  Network setup
+        # todo maybe put all __call__ in _call and in __call__ you set and clear the parameters and the condition
         epsilon_net.set_sampling_parameters(
             num_sampling_steps=num_sampling_steps,
             num_reconstructions=num_reconstructions,
@@ -122,7 +123,7 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
 
             # --- 5a.  Network predictions
             z0_prediction: Tensor = epsilon_net.predict_x0(z_t, timestep)
-            x0_prediction: Tensor = epsilon_net.decode(z0_prediction)
+            x0_prediction: Tensor = epsilon_net.decode(z0_prediction, differentiable=True)
 
             # --- 5b.  Data‑consistency penalties
             H_x0_prediction: Tensor = operator.apply(x0_prediction)
@@ -133,7 +134,7 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
                 + x0_prediction
                 - operator.apply_transpose(H_x0_prediction)
             )
-            z_effective: Tensor = epsilon_net.encode(x_effective)
+            z_effective: Tensor = epsilon_net.encode(x_effective, differentiable=True)
             gluing_error: Tensor = torch.norm(z0_prediction - z_effective)
 
             total_error: Tensor = omega * likelihood_error + gamma * gluing_error
@@ -158,4 +159,8 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
         if decode_output:
             x0_output: Tensor = epsilon_net.decode(final_z0, differentiable=False)
             return x_view.unflatten(x0_output)
+
+        epsilon_net.clear_condition()
+        epsilon_net.clear_sampling_parameters()
+
         return z_view.unflatten(final_z0)
