@@ -1,13 +1,13 @@
-from .base import LatentNetwork, Network
-from .custom import CustomNetwork
+from .base import EpsilonNetwork, LatentEpsilonNetwork
+from .custom import CustomEpsilonNetwork
 from .hugging_face.ddpm import DDPMNetwork
 from .hugging_face.stable_diffusion import StableDiffusionCondition, StableDiffusionNetwork
 
 __all__ = [
-    "CustomNetwork",
+    "CustomEpsilonNetwork",
     "DDPMNetwork",
     "StableDiffusionNetwork",
     "StableDiffusionCondition",
-    "Network",
-    "LatentNetwork",
+    "EpsilonNetwork",
+    "LatentEpsilonNetwork",
 ]

@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 
 from samplers.dtypes import Shape, Tensor
-from samplers.networks import Network
+from samplers.networks import EpsilonNetwork
 
 
 class PosteriorSampler(ABC):
-    def __init__(self, network: Network):
+    def __init__(self, network: EpsilonNetwork):
         self._epsilon_network = network
 
     @staticmethod
