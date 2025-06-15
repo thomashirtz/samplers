@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
     model_id = "google/ddpm-celebahq-256"
     network = DDPMNetwork.from_pretrained(
-        model_id, cache_dir=MODELS_DIRECTORY, dtype=dtype, device=device
+        model_id, cache_dir=MODELS_DIRECTORY, torch_dtype=dtype, device=device
     )
 
     image = Image.open("ddpm.png")

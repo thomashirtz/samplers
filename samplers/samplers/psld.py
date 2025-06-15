@@ -7,7 +7,7 @@ from tqdm import trange
 
 from samplers.dtypes import Shape
 from samplers.inverse_problem import InverseProblem
-from samplers.networks import LatentNetwork
+from samplers.networks import LatentEpsilonNetwork
 from samplers.samplers.base import PosteriorSampler
 
 from .utils.batch_view import BatchView
@@ -36,7 +36,7 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
     def __init__(self, network):
         super().__init__(network)
 
-        if not isinstance(self._epsilon_network, LatentNetwork):
+        if not isinstance(self._epsilon_network, LatentEpsilonNetwork):
             raise TypeError(
                 f"{self.__class__.__name__} requires a latent diffusion model, "
                 f"but build_network returned a non-latent network "
@@ -83,7 +83,7 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
 
         x_view = BatchView(batch_shape, num_reconstructions, x_shape)
 
-        epsilon_net: LatentNetwork = self._epsilon_network
+        epsilon_net: LatentEpsilonNetwork = self._epsilon_network
         latent_shape: Shape = epsilon_net.get_latent_shape(x_shape)
         z_view = BatchView(batch_shape, num_reconstructions, latent_shape)
 

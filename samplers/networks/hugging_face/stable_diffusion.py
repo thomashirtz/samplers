@@ -8,7 +8,7 @@ from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import rescale_noise_cfg
 
 from samplers.dtypes import Device, DType, Shape
-from samplers.networks import LatentNetwork
+from samplers.networks import LatentEpsilonNetwork
 
 
 @dataclasses.dataclass(slots=True)
@@ -46,7 +46,7 @@ class ConditioningState:
     timestep_cond: torch.Tensor | None
 
 
-class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
+class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
     """Expose a `StableDiffusionPipeline` as an ε-network for posterior
     samplers.
 
@@ -80,11 +80,11 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         self._pipeline.vae.eval().requires_grad_(False)
 
         # The factor by which the VAE multiplies its latent tensors
-        self._vae_latent_multiplier = self._vae.config.scaling_factor
+        self._vae_latent_multiplier = self.vae.config.scaling_factor
         # The ratio by which the latent’s spatial dimensions are scaled
-        self.latent_resolution_ratio = self._vae_scale_factor
+        self.latent_resolution_ratio = self.pipeline.vae_scale_factor
         # The number of channels contained in each latent tensor
-        self.latent_num_channels = self._vae.config.latent_channels
+        self.latent_num_channels = self.vae.config.latent_channels
 
     @classmethod
     def from_pretrained(
@@ -160,7 +160,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
             If *None*, an empty ``StableDiffusionCondition()`` is used which
             yields unconditional generation.
         """
-        if self.is_sampling_initialized:
+        if not self.are_sampling_parameters_initialized:
             raise RuntimeError("Call `set_sampling_parameters()` before conditioning.")
 
         condition = condition if condition is not None else StableDiffusionCondition()
@@ -287,7 +287,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
     def forward(self, latents: torch.Tensor, t: torch.Tensor | int) -> torch.Tensor:
         """Return ε(xₜ, t) for the given latents and timestep."""
 
-        if self.is_condition_initialized:
+        if not self.is_condition_initialized:
             raise RuntimeError("Call `set_condition()` before sampling.")
 
         state = self._conditioning
@@ -298,7 +298,7 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         latent_model_input = self._pipeline.scheduler.scale_model_input(latent_model_input, t)
 
         # Main UNet call.
-        noise_pred = self._unet(
+        noise_pred = self.unet(
             sample=latent_model_input,
             timestep=t,
             encoder_hidden_states=state.prompt_embeds,
@@ -327,14 +327,14 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         """Convert latent z → image x using the VAE decoder."""
         z_scaled = z / self._vae_latent_multiplier
         with torch.set_grad_enabled(differentiable):
-            images = self._vae.decode(z_scaled, return_dict=False)[0]
+            images = self.vae.decode(z_scaled, return_dict=False)[0]
         return images
 
     @torch.inference_mode()
     def _encode(self, x: torch.Tensor, *, differentiable: bool = False) -> torch.Tensor:
         """Convert image x → latent z using the VAE encoder (returns mean)."""
         with torch.set_grad_enabled(differentiable):
-            distribution: DiagonalGaussianDistribution = self._vae.encode(x, return_dict=False)[0]
+            distribution: DiagonalGaussianDistribution = self.vae.encode(x, return_dict=False)[0]
             z_scaled = distribution.mean * self._vae_latent_multiplier
         return z_scaled
 
@@ -349,25 +349,14 @@ class StableDiffusionNetwork(LatentNetwork[StableDiffusionCondition]):
         return self._pipeline.dtype
 
     @property
-    def _unet(self) -> UNet2DConditionModel:  # code elsewhere still uses self._unet
+    def unet(self) -> UNet2DConditionModel:  # code elsewhere still uses self._unet
         return self._pipeline.unet
 
     @property
-    def _vae(self) -> AutoencoderKL:
+    def vae(self) -> AutoencoderKL:
         return self._pipeline.vae
 
     def clear_condition(self) -> None:
         """Remove cached embeddings to release VRAM."""
         self._conditioning = None
         torch.cuda.empty_cache()
-
-    @property
-    def is_condition_initialized(self) -> bool:
-        """True if `set_condition()` has been called and embeddings are
-        cached."""
-        return self._conditioning is not None
-
-    @property
-    def is_sampling_initialized(self) -> bool:
-        """True if `set_sampling_parameters()` has been called."""
-        return self._batch_size is not None

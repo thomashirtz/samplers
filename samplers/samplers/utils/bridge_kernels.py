@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
-from samplers.networks.base import Network
+from samplers.networks.base import EpsilonNetwork
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class BridgeStatistics:
 def compute_bridge_kernel_statistics(
     x_ell: torch.Tensor,
     x_s: torch.Tensor,
-    epsilon_net: Network,
+    epsilon_net: EpsilonNetwork,
     ell: int,
     t: int,
     s: int,
@@ -49,7 +49,7 @@ def compute_bridge_kernel_statistics(
 def sample_bridge_kernel(
     x_ell: torch.Tensor,
     x_s: torch.Tensor,
-    epsilon_net: Network,
+    epsilon_net: EpsilonNetwork,
     ell: int,
     t: int,
     s: int,
@@ -61,7 +61,7 @@ def sample_bridge_kernel(
 
 def ddim_step(
     x: torch.Tensor,
-    epsilon_net: Network,
+    epsilon_net: EpsilonNetwork,
     t: float,
     t_prev: float,
     eta: float,
