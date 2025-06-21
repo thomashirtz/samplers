@@ -8,7 +8,8 @@ from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import rescale_noise_cfg
 
 from samplers.dtypes import Device, DType, Shape
-from samplers.networks import LatentEpsilonNetwork
+
+from ..base import DiffusionType, LatentEpsilonNetwork
 
 
 @dataclasses.dataclass(slots=True)
@@ -372,3 +373,7 @@ class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
 
     def is_condition_initialized(self):
         return self._conditioning is not None
+
+    @property
+    def diffusion_type(self) -> DiffusionType:
+        return DiffusionType.VARIANCE_PRESERVING
