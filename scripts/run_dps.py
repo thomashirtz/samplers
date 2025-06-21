@@ -11,7 +11,7 @@ from samplers.utils.image import pil_to_tensor, tensor_to_pil
 
 if __name__ == "__main__":
 
-    dtype = torch.bfloat16
+    dtype = torch.float32
     device = "cuda:0"
 
     model_id = "google/ddpm-celebahq-256"
@@ -36,6 +36,6 @@ if __name__ == "__main__":
     )
 
     sampler = DPSSampler(network=network)
-    x_hat = sampler(inverse_problem=inverse_problem, num_sampling_steps=4)
+    x_hat = sampler(inverse_problem=inverse_problem, num_sampling_steps=100)
     sample = tensor_to_pil(x_hat)
     sample.save("dps.jpg")
