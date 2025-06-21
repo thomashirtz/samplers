@@ -39,9 +39,9 @@ if __name__ == "__main__":
     sampler = PSLDSampler(network=network)
     x_hat = sampler(
         inverse_problem=inverse_problem,
-        num_sampling_steps=4,
+        num_sampling_steps=100,
         num_reconstructions=2,
         condition=condition,
     )
     sample = tensor_to_pil(x_hat[0, 0])
-    sample.save("dps.jpg")
+    sample.save("psld.jpg")

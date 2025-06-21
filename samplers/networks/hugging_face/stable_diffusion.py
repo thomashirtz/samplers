@@ -82,7 +82,7 @@ class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
         # The factor by which the VAE multiplies its latent tensors
         self._vae_latent_multiplier = self.vae.config.scaling_factor
         # The ratio by which the latent’s spatial dimensions are scaled
-        self.latent_resolution_ratio = self.pipeline.vae_scale_factor
+        self.latent_resolution_ratio = self._pipeline.vae_scale_factor
         # The number of channels contained in each latent tensor
         self.latent_num_channels = self.vae.config.latent_channels
 
@@ -128,7 +128,12 @@ class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
         self._num_reconstructions = num_reconstructions
 
         self._pipeline.scheduler.set_timesteps(num_sampling_steps, device=self.device)
-        timesteps = self._pipeline.scheduler.timesteps
+        # timesteps = torch.flip(self._pipeline.scheduler.timesteps, dims=(0,))
+        # timesteps = self._pipeline.scheduler.timesteps
+        # todo need to investigate but basically for DDPM what was used in the code and the actual schedule in posterior
+        #  sampler library is different, in the case of DDPM it goes to 990, in the code 999, also be careful because
+        #  the order is reversed in the ddpm code
+        timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)
 
     def get_latent_shape(self, x_shape: Shape) -> Shape:
@@ -191,6 +196,10 @@ class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
         self._pipeline._interrupt = False
 
         # 2. Define call parameters
+        # todo there is actually an issue, the whole sampler is supposed to be able to run with batch_shape of any shape
+        #  and everything seems to be good for this, except the handling of the prompt. (because we would need to handle
+        #  list of list of prompt or something like this. If we really want to keep this flexibility, we can implement
+        #  an utility to do that, otherwise we can simplify the sampler to accept only batch size and not batch shape.
         if condition.prompt is not None and isinstance(condition.prompt, str):
             batch_size = 1
         elif condition.prompt is not None and isinstance(condition.prompt, list):
@@ -360,3 +369,6 @@ class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
         """Remove cached embeddings to release VRAM."""
         self._conditioning = None
         torch.cuda.empty_cache()
+
+    def is_condition_initialized(self):
+        return self._conditioning is not None

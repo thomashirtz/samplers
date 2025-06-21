@@ -40,7 +40,7 @@ class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNet
         # todo it seems unconventional to divide by this value
         return (x - (1 - acp_t) ** 0.5 * self.forward(x, t)) / (acp_t**0.5)
 
-    def score(self, x: Tensor, t: Tensor):
+    def score(self, x: Tensor, t: Tensor):  # todo combine forward and score ?
         acp_t = self.alphas_cumprod[t] / self.alphas_cumprod[self.timesteps[0]]
         return -self.forward(x, t) / (1 - acp_t) ** 0.5
 
