@@ -1,5 +1,6 @@
 import dataclasses
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Generic, TypeVar
 
 import torch
@@ -8,6 +9,12 @@ from torch import Tensor
 from samplers.dtypes import Shape
 
 C = TypeVar("C")
+
+
+class DiffusionType(Enum):
+    VARIANCE_PRESERVING = "variance_preserving"
+    VARIANCE_EXPLODING = "variance_exploding"
+    UNKNOWN = "unknown"
 
 
 class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNetwork vs Denoiser
@@ -81,6 +88,10 @@ class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNet
     def is_condition_initialized(self) -> bool: ...
 
     def clear_condition(self): ...
+
+    @property
+    @abstractmethod
+    def diffusion_type(self) -> DiffusionType: ...
 
 
 class LatentEpsilonNetwork(EpsilonNetwork[C], ABC, Generic[C]):

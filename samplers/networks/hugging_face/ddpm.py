@@ -6,7 +6,7 @@ from torch import Tensor
 
 from samplers.dtypes import Device, DType
 
-from ..base import EpsilonNetwork, NoCondition
+from ..base import DiffusionType, EpsilonNetwork, NoCondition
 
 
 class DDPMNetwork(EpsilonNetwork[NoCondition]):
@@ -89,3 +89,7 @@ class DDPMNetwork(EpsilonNetwork[NoCondition]):
     def dtype(self) -> torch.dtype:  # noqa: D401
         """Device on which the adapter’s parameters live."""
         return self._pipeline.dtype
+
+    @property
+    def diffusion_type(self) -> DiffusionType:
+        return DiffusionType.VARIANCE_PRESERVING
