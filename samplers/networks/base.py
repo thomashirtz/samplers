@@ -14,6 +14,7 @@ C = TypeVar("C")
 class DiffusionType(Enum):
     VARIANCE_PRESERVING = "variance_preserving"
     VARIANCE_EXPLODING = "variance_exploding"
+    SUB_VARIANCE_PRESERVING = "sub_variance_preserving"
     UNKNOWN = "unknown"
 
 
