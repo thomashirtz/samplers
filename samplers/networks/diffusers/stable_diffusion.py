@@ -129,12 +129,11 @@ class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
         self._num_reconstructions = num_reconstructions
 
         self._pipeline.scheduler.set_timesteps(num_sampling_steps, device=self.device)
-        # timesteps = torch.flip(self._pipeline.scheduler.timesteps, dims=(0,))
-        # timesteps = self._pipeline.scheduler.timesteps
-        # todo need to investigate but basically for DDPM what was used in the code and the actual schedule in posterior
-        #  sampler library is different, in the case of DDPM it goes to 990, in the code 999, also be careful because
-        #  the order is reversed in the ddpm code
-        timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)
+        timesteps = torch.flip(self._pipeline.scheduler.timesteps, dims=(0,))
+        # todo investigate the effects of using the sampler's timesteps instead of the ones from the pipeline.
+        #  We need to see if including the borns change something. (pipeline 0-999, sampler 0-990)
+        #  timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long, device=self.device)
+
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)
 
     def get_latent_shape(self, x_shape: Shape) -> Shape:
