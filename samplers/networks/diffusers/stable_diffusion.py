@@ -133,6 +133,7 @@ class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
         # todo investigate the effects of using the sampler's timesteps instead of the ones from the pipeline.
         #  We need to see if including the borns change something. (pipeline 0-999, sampler 0-990)
         #  timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long, device=self.device)
+        #  reference: https://arxiv.org/abs/2305.08891
 
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)
 
