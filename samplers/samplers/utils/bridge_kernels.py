@@ -73,3 +73,43 @@ def ddim_step(
     return sample_bridge_kernel(
         x_ell=x, x_s=e_t, epsilon_net=epsilon_net, ell=t, t=t_prev, s=t_0, eta=eta
     )
+
+
+def _broadcast_schedule_coeff(coeff: Tensor, x: Tensor) -> Tensor:
+    return coeff.to(device=x.device, dtype=x.dtype).view(-1, *([1] * (x.ndim - 1)))
+
+
+def ddim_step_eps(
+    x: Tensor,
+    *,
+    epsilon_net: EpsilonNetwork,
+    t: int,
+    t_prev: int,
+    eta: float,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """DDIM update in epsilon parameterization (returns ``x_prev``, ``x0``,
+    pseudo-``x0``).
+
+    Used by ReSample; DPS/PGDM use :func:`ddim_step` (x₀ bridge formulation).
+    """
+    acp_t = epsilon_net.alphas_cumprod[t]
+    acp_prev = epsilon_net.alphas_cumprod[t_prev]
+
+    with torch.no_grad():
+        e_t = epsilon_net.predict_noise(x, t)
+
+    sqrt_oma_t = (1 - acp_t).sqrt()
+    a_t = _broadcast_schedule_coeff(acp_t, x)
+    a_prev = _broadcast_schedule_coeff(acp_prev, x)
+    sqrt_oma = _broadcast_schedule_coeff(sqrt_oma_t, x)
+
+    pred_x0 = (x - sqrt_oma * e_t) / a_t.sqrt()
+    pseudo_x0 = (x - (1 - acp_t) * e_t) / a_t.sqrt()
+
+    sigma_t = eta * ((1 - acp_prev) / (1 - acp_t) * (1 - acp_t / acp_prev)).clamp(min=0).sqrt()
+    sigma = _broadcast_schedule_coeff(sigma_t, x)
+    dir_xt = (1 - acp_prev - sigma_t**2).clamp(min=0).sqrt() * e_t
+    noise = sigma * torch.randn_like(x)
+    x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
+
+    return x_prev, pred_x0, pseudo_x0

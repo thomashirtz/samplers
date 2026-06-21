@@ -11,7 +11,6 @@ C = TypeVar("C")
 
 
 class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):
-
     """Variance-preserving diffusion prior wrapper.
 
     Indexing contract (used by samplers and ``bridge_kernels``):
@@ -94,24 +93,22 @@ class LatentEpsilonNetwork(EpsilonNetwork[C], ABC, Generic[C]):
     def decode(self, z: Tensor, differentiable: bool = False):
         if not differentiable:
             with torch.no_grad():
-                out = self._decode(z=z)
+                out = self._decode(z=z, differentiable=False)
             return out.detach()
-        else:
-            return self._decode(z=z)
+        return self._decode(z=z, differentiable=True)
 
     @abstractmethod
-    def _decode(self, z: Tensor): ...
+    def _decode(self, z: Tensor, *, differentiable: bool = False): ...
 
     def encode(self, x: Tensor, differentiable: bool = False):
         if not differentiable:
             with torch.no_grad():
-                out = self._encode(x=x)
+                out = self._encode(x=x, differentiable=False)
             return out.detach()
-        else:
-            return self._encode(x=x)
+        return self._encode(x=x, differentiable=True)
 
     @abstractmethod
-    def _encode(self, x: Tensor): ...
+    def _encode(self, x: Tensor, *, differentiable: bool = False): ...
 
 
 @dataclasses.dataclass(slots=True)
