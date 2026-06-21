@@ -1,7 +1,7 @@
 from .base import EpsilonNetwork, LatentEpsilonNetwork
 from .custom import CustomEpsilonNetwork
-from .hugging_face.ddpm import DDPMNetwork
-from .hugging_face.stable_diffusion import StableDiffusionCondition, StableDiffusionNetwork
+from .diffusers.ddpm import DDPMNetwork
+from .diffusers.stable_diffusion import StableDiffusionCondition, StableDiffusionNetwork
 
 __all__ = [
     "CustomEpsilonNetwork",

@@ -90,7 +90,6 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
         flat_batch_size: int = z_view.leading_size  # |B| · R
 
         # 2.  Network setup
-        # todo maybe put all __call__ in _call and in __call__ you set and clear the parameters and the condition
         epsilon_net.set_sampling_parameters(
             num_sampling_steps=num_sampling_steps,
             num_reconstructions=num_reconstructions,
@@ -98,69 +97,70 @@ class PSLDSampler(PosteriorSampler, Generic[Condition_co]):
         )
         epsilon_net.set_condition(condition)
 
-        # 3.  Initialise latent noise z_T
-        z_t: Tensor = torch.randn(
-            (flat_batch_size, *latent_shape),
-            device=epsilon_net.device,
-            dtype=epsilon_net.dtype,
-        )
-
-        # 4.  Pre‑compute constants
-        timesteps = epsilon_net.timesteps  # list[int]
-
-        observation_flat: Tensor = x_view.repeat_observation(inverse_problem.observation)
-        operator = inverse_problem.operator
-        H_transpose_observation_flat: Tensor = x_view.repeat_observation(
-            operator.apply_transpose(inverse_problem.observation)
-        )
-
-        # 5.  Reverse diffusion loop
-        for i in trange(len(timesteps) - 1, 1, -1):
-            timestep: int = int(timesteps[i])
-            timestep_previous: int = int(timesteps[i - 1])
-
-            z_t.requires_grad_()
-
-            # --- 5a.  Network predictions
-            z0_prediction: Tensor = epsilon_net.predict_x0(z_t, timestep)
-            x0_prediction: Tensor = epsilon_net.decode(z0_prediction, differentiable=True)
-
-            # --- 5b.  Data‑consistency penalties
-            H_x0_prediction: Tensor = operator.apply(x0_prediction)
-            likelihood_error: Tensor = torch.norm(observation_flat - H_x0_prediction)
-
-            x_effective: Tensor = (
-                H_transpose_observation_flat
-                + x0_prediction
-                - operator.apply_transpose(H_x0_prediction)
+        try:
+            # 3.  Initialise latent noise z_T
+            z_t: Tensor = torch.randn(
+                (flat_batch_size, *latent_shape),
+                device=epsilon_net.device,
+                dtype=epsilon_net.dtype,
             )
-            z_effective: Tensor = epsilon_net.encode(x_effective, differentiable=True)
-            gluing_error: Tensor = torch.norm(z0_prediction - z_effective)
 
-            total_error: Tensor = omega * likelihood_error + gamma * gluing_error
-            (gradient,) = torch.autograd.grad(total_error, z_t)
+            # 4.  Pre‑compute constants
+            timesteps = epsilon_net.timesteps  # list[int]
 
-            # --- 5c.  DDIM step followed by gradient correction
-            with torch.no_grad():
-                z_t = ddim_step(
-                    x=z_t.detach(),
-                    epsilon_net=epsilon_net,
-                    t=timestep,
-                    t_prev=timestep_previous,
-                    eta=eta,
-                    e_t=z0_prediction,
+            observation_flat: Tensor = x_view.repeat_observation(inverse_problem.observation)
+            operator = inverse_problem.operator
+            H_transpose_observation_flat: Tensor = x_view.repeat_observation(
+                operator.apply_transpose(inverse_problem.observation)
+            )
+
+            # 5.  Reverse diffusion loop
+            for i in trange(len(timesteps) - 1, 1, -1):
+                timestep: int = int(timesteps[i])
+                timestep_previous: int = int(timesteps[i - 1])
+
+                z_t.requires_grad_()
+
+                # --- 5a.  Network predictions
+                z0_prediction: Tensor = epsilon_net.predict_x0(z_t, timestep)
+                x0_prediction: Tensor = epsilon_net.decode(z0_prediction, differentiable=True)
+
+                # --- 5b.  Data‑consistency penalties
+                H_x0_prediction: Tensor = operator.apply(x0_prediction)
+                likelihood_error: Tensor = torch.norm(observation_flat - H_x0_prediction)
+
+                x_effective: Tensor = (
+                    H_transpose_observation_flat
+                    + x0_prediction
+                    - operator.apply_transpose(H_x0_prediction)
                 )
-                z_t = z_t - gradient
+                z_effective: Tensor = epsilon_net.encode(x_effective, differentiable=True)
+                gluing_error: Tensor = torch.norm(z0_prediction - z_effective)
 
-        # 6.  Final prediction at timestep 1 (t₁)
-        final_z0: Tensor = epsilon_net.predict_x0(z_t, int(timesteps[1]))
+                total_error: Tensor = omega * likelihood_error + gamma * gluing_error
+                (gradient,) = torch.autograd.grad(total_error, z_t)
 
-        # 7.  Decode and restore structured view
-        if decode_output:
-            x0_output: Tensor = epsilon_net.decode(final_z0, differentiable=False)
-            return x_view.unflatten(x0_output)
+                # --- 5c.  DDIM step followed by gradient correction
+                with torch.no_grad():
+                    z_t = ddim_step(
+                        x=z_t.detach(),
+                        epsilon_net=epsilon_net,
+                        t=timestep,
+                        t_prev=timestep_previous,
+                        eta=eta,
+                        e_t=z0_prediction,
+                    )
+                    z_t = z_t - gradient
 
-        epsilon_net.clear_condition()
-        epsilon_net.clear_sampling_parameters()
+            # 6.  Final prediction at timestep 1 (t₁)
+            final_z0: Tensor = epsilon_net.predict_x0(z_t, int(timesteps[1]))
 
-        return z_view.unflatten(final_z0)
+            # 7.  Decode and restore structured view
+            if decode_output:
+                x0_output: Tensor = epsilon_net.decode(final_z0, differentiable=False)
+                return x_view.unflatten(x0_output)
+
+            return z_view.unflatten(final_z0)
+        finally:
+            epsilon_net.clear_condition()
+            epsilon_net.clear_sampling_parameters()

@@ -6,7 +6,7 @@ from torch import Tensor
 
 from samplers.dtypes import Device, DType
 
-from ..base import EpsilonNetwork, NoCondition
+from samplers.networks.base import EpsilonNetwork, NoCondition
 
 
 class DDPMNetwork(EpsilonNetwork[NoCondition]):
@@ -53,12 +53,8 @@ class DDPMNetwork(EpsilonNetwork[NoCondition]):
         self._num_reconstructions = num_reconstructions
 
         self._pipeline.scheduler.set_timesteps(num_sampling_steps, device=self.device)
-        # timesteps = torch.flip(self._pipeline.scheduler.timesteps, dims=(0,))
-        # timesteps = self._pipeline.scheduler.timesteps
-        # todo need to investigate but basically for DDPM what was used in the code and the actual schedule in posterior
-        #  sampler library is different, in the case of DDPM it goes to 990, in the code 999, also be careful because
-        #  the order is reversed in the ddpm code
-        timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long)
+        # Diffusers returns descending timesteps; bridge kernels need ascending (s < t < ℓ).
+        timesteps = torch.flip(self._pipeline.scheduler.timesteps, dims=(0,))
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)
 
     def is_condition_initialized(self) -> bool:
@@ -89,3 +85,4 @@ class DDPMNetwork(EpsilonNetwork[NoCondition]):
     def dtype(self) -> torch.dtype:  # noqa: D401
         """Device on which the adapter’s parameters live."""
         return self._pipeline.dtype
+

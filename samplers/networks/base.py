@@ -10,15 +10,22 @@ from samplers.dtypes import Shape
 C = TypeVar("C")
 
 
-class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNetwork vs Denoiser
-    # todo not sure if I actually like epsilon network, too long, not minimalist enough
+class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):
+
+    """Variance-preserving diffusion prior wrapper.
+
+    Indexing contract (used by samplers and ``bridge_kernels``):
+
+    - ``alphas_cumprod`` is padded: index ``0`` → ``1.0``, index ``k`` → ``alpha_bar_k``.
+    - ``timesteps`` buffer is **ascending** (low → high noise index).
+    - ``t`` in ``forward`` / ``predict_x0`` / ``ddim_step`` is a buffer index.
+    """
 
     def __init__(self, alphas_cumprod: Tensor):
         super().__init__()
-        alphas_cumprod = alphas_cumprod.clip(1e-6, 1)  # todo is it needed to clip ?
+        alphas_cumprod = alphas_cumprod.clip(1e-6, 1)
         self.register_buffer("alphas_cumprod", alphas_cumprod)
 
-        # self.timesteps = None  # todo need to somehow make it abstract property before it is registered
         self._batch_size = None
         self._num_sampling_steps = None
         self._num_reconstructions = None
@@ -27,22 +34,18 @@ class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNet
     def forward(self, x: Tensor, t: Tensor | int): ...
 
     # todo if it is called Epsilon network, forward can stay as is, however if it is just called network, maybe
-    #  it should be called predict noise and predict denoised sample, or somehting like this.
+    #  it should be called predict noise and predict denoised sample, or something like this.
 
     def predict_noise(self, x: Tensor, t: Tensor | int):
         return self.forward(x, t)
 
     def predict_x0(self, x: Tensor, t: Tensor | int):
-        # todo actually I don't like this naming because it seems like most of the networks are becoming latent,
-        #  I would prefer something that is space (pixel space/latent space) agnostic (like sample)
-        # predict_denoised_sample
-        acp_t = self.alphas_cumprod[t] / self.alphas_cumprod[self.timesteps[0].int()]
-        # todo it seems unconventional to divide by this value
+        acp_t = self.alphas_cumprod[t]
         return (x - (1 - acp_t) ** 0.5 * self.forward(x, t)) / (acp_t**0.5)
 
-    def score(self, x: Tensor, t: Tensor):  # todo combine forward and score ?
-        acp_t = self.alphas_cumprod[t] / self.alphas_cumprod[self.timesteps[0]]
-        return -self.forward(x, t) / (1 - acp_t) ** 0.5
+    def score(self, x: Tensor, t: Tensor):
+        acp_t = self.alphas_cumprod[t]
+        return -self.forward(x, t) / ((1 - acp_t) ** 0.5)
 
     @property
     def device(self) -> torch.device:
