@@ -68,6 +68,22 @@ Before `git push`:
 - [ ] README unchanged unless this MR is explicitly a README update
 - [ ] No `.scratch/` files staged
 - [ ] No local artifacts staged (images, chat logs, workspace files)
+- [ ] Commit message has **no** `Co-authored-by:` trailer (see below)
+
+### Commits must be author-only
+
+GitHub shows co-authors from a `Co-authored-by:` line in the commit message. Some
+IDE agents append this automatically — **never push that**.
+
+Before every push:
+
+```bash
+git log -1 --format=%B
+```
+
+If a co-author trailer appears, rewrite the commit locally (without the trailer)
+before pushing. In Cursor: disable agent co-author attribution in settings, or
+commit from your own terminal.
 
 Quick audit:
 
