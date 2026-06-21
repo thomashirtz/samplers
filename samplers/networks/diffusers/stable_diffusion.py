@@ -8,7 +8,6 @@ from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import rescale_noise_cfg
 
 from samplers.dtypes import Device, DType, Shape
-
 from samplers.networks.base import LatentEpsilonNetwork
 
 
@@ -328,21 +327,22 @@ class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
 
         return noise_pred
 
-    @torch.inference_mode()
     def _decode(self, z: torch.Tensor, *, differentiable: bool = False) -> torch.Tensor:
         """Convert latent z → image x using the VAE decoder."""
         z_scaled = z / self._vae_latent_multiplier
-        with torch.set_grad_enabled(differentiable):
-            images = self.vae.decode(z_scaled, return_dict=False)[0]
-        return images
+        if differentiable:
+            return self.vae.decode(z_scaled, return_dict=False)[0]
+        with torch.inference_mode():
+            return self.vae.decode(z_scaled, return_dict=False)[0]
 
-    @torch.inference_mode()
     def _encode(self, x: torch.Tensor, *, differentiable: bool = False) -> torch.Tensor:
         """Convert image x → latent z using the VAE encoder (returns mean)."""
-        with torch.set_grad_enabled(differentiable):
+        if differentiable:
             distribution: DiagonalGaussianDistribution = self.vae.encode(x, return_dict=False)[0]
-            z_scaled = distribution.mean * self._vae_latent_multiplier
-        return z_scaled
+            return distribution.mean * self._vae_latent_multiplier
+        with torch.inference_mode():
+            distribution = self.vae.encode(x, return_dict=False)[0]
+            return distribution.mean * self._vae_latent_multiplier
 
     @property
     def device(self) -> torch.device:  # noqa: D401
@@ -369,4 +369,3 @@ class StableDiffusionNetwork(LatentEpsilonNetwork[StableDiffusionCondition]):
 
     def is_condition_initialized(self):
         return self._conditioning is not None
-
