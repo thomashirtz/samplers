@@ -99,6 +99,7 @@ class PGDMSampler(PosteriorSampler, Generic[Condition_co]):
         # sample = epsilon_net.q_sample(y0_inv, last_timestep)
 
         # 4. Sampling loop (reverse diffusion with pseudoinverse guidance)
+        observation_flat = view.repeat_observation(inverse_problem.observation)
         timesteps = epsilon_net.timesteps
         for i in trange(len(timesteps) - 1, 1, -1):
             timestep = int(timesteps[i])
@@ -109,42 +110,28 @@ class PGDMSampler(PosteriorSampler, Generic[Condition_co]):
             x0_pred = epsilon_net.predict_x0(sample, timestep)
 
             # Calculate PGDM consistency loss
-            with torch.enable_grad():  # Ensure grads are enabled for this part
-                y0_inv = operator.apply_pseudo_inverse(inverse_problem.observation)
+            with torch.enable_grad():
+                y0_inv = operator.apply_pseudo_inverse(observation_flat)
                 x0_pred_fwd = operator.forward(x0_pred)
                 x0_pred_inv = operator.apply_pseudo_inverse(x0_pred_fwd)
 
-                # We need the gradient w.r.t x_t, so we compute loss w.r.t. something differentiable
-                # that depends on x_t. Using x0_pred works perfectly.
                 consistency_loss = (y0_inv - x0_pred_inv).pow(2).sum()
 
-            # Calculate the gradient of this consistency term with respect to the noisy sample x_t
             grad = torch.autograd.grad(consistency_loss, sample)[0]
 
-            # Perform standard DDIM step
-            e_t = epsilon_net.predict_noise(sample.detach(), timestep)
             sample_ddim = ddim_step(
                 x=sample.detach(),
                 epsilon_net=epsilon_net,
                 t=timestep,
                 t_prev=timestep_prev,
                 eta=eta,
-                e_t=e_t,
+                e_t=x0_pred.detach(),
             )
 
             with torch.no_grad():
-                # --- Correct VP Scaling for the Guidance Term ---
-                # Get the cumulative alpha for the current timestep t
                 alphas_cumprod = epsilon_net.alphas_cumprod
                 acp_t = alphas_cumprod[timestep]
-
-                # The scaling factor ensures the gradient step is proportional to the noise level.
-                # This is a common and effective scaling for VP models.
-                # The gradient was on a loss of x0, but taken w.r.t xt. This scaling is crucial.
-                # A factor of sqrt(1 - alpha_t) is theoretically sound for guiding the score.
                 scale = guidance_weight * torch.sqrt(1 - acp_t)
-
-                # Apply the guided update. We subtract because we want to descend the loss.
                 sample = sample_ddim - scale * grad
 
         # 5. Final clean data prediction and reshape back

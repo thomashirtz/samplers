@@ -6,7 +6,7 @@ from torch import Tensor
 
 from samplers.dtypes import Device, DType
 
-from ..base import DiffusionType, EpsilonNetwork, NoCondition
+from samplers.networks.base import EpsilonNetwork, NoCondition
 
 
 class DDPMNetwork(EpsilonNetwork[NoCondition]):
@@ -53,12 +53,8 @@ class DDPMNetwork(EpsilonNetwork[NoCondition]):
         self._num_reconstructions = num_reconstructions
 
         self._pipeline.scheduler.set_timesteps(num_sampling_steps, device=self.device)
+        # Diffusers returns descending timesteps; bridge kernels need ascending (s < t < ℓ).
         timesteps = torch.flip(self._pipeline.scheduler.timesteps, dims=(0,))
-        # todo investigate the effects of using the sampler's timesteps instead of the ones from the pipeline.
-        #  We need to see if including the borns change something. (pipeline 0-999, sampler 0-990)
-        #  timesteps = torch.linspace(start=0, end=999, steps=num_sampling_steps, dtype=torch.long, device=self.device)
-        #  reference: https://arxiv.org/abs/2305.08891
-
         self.register_buffer(name="timesteps", tensor=timesteps, persistent=True)
 
     def is_condition_initialized(self) -> bool:
@@ -90,6 +86,3 @@ class DDPMNetwork(EpsilonNetwork[NoCondition]):
         """Device on which the adapter’s parameters live."""
         return self._pipeline.dtype
 
-    @property
-    def diffusion_type(self) -> DiffusionType:
-        return DiffusionType.VARIANCE_PRESERVING

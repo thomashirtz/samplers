@@ -1,6 +1,5 @@
 import dataclasses
 from abc import ABC, abstractmethod
-from enum import Enum
 from typing import Generic, TypeVar
 
 import torch
@@ -11,14 +10,16 @@ from samplers.dtypes import Shape
 C = TypeVar("C")
 
 
-class DiffusionType(Enum):
-    VARIANCE_PRESERVING = "variance_preserving"
-    VARIANCE_EXPLODING = "variance_exploding"
-    SUB_VARIANCE_PRESERVING = "sub_variance_preserving"
-    UNKNOWN = "unknown"
+class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):
 
+    """Variance-preserving diffusion prior wrapper.
 
-class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNetwork vs Denoiser
+    Indexing contract (used by samplers and ``bridge_kernels``):
+
+    - ``alphas_cumprod`` is padded: index ``0`` → ``1.0``, index ``k`` → ``alpha_bar_k``.
+    - ``timesteps`` buffer is **ascending** (low → high noise index).
+    - ``t`` in ``forward`` / ``predict_x0`` / ``ddim_step`` is a buffer index.
+    """
 
     def __init__(self, alphas_cumprod: Tensor):
         super().__init__()
@@ -83,10 +84,6 @@ class EpsilonNetwork(torch.nn.Module, ABC, Generic[C]):  # Network vs EpsilonNet
     def is_condition_initialized(self) -> bool: ...
 
     def clear_condition(self): ...
-
-    @property
-    @abstractmethod
-    def diffusion_type(self) -> DiffusionType: ...
 
 
 class LatentEpsilonNetwork(EpsilonNetwork[C], ABC, Generic[C]):
