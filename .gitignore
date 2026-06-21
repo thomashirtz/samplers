@@ -5,3 +5,4 @@
 *.pyc
 /samplers.code-workspace
 /chat-*.txt
+/docs/MERGE_REQUESTS.md
