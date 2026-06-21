@@ -92,7 +92,7 @@ class BatchView:
     @property
     def shape(self) -> Tuple[int, ...]:
         """Shape — (*batch_shape, num_samples, *data_shape)."""
-        return *self._leading_shape, self._num_samples, *self._data_shape
+        return (*self._leading_shape, *self._data_shape)
 
     @property
     def per_sample_broadcast_shape(self) -> Tuple[int, ...]:

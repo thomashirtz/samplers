@@ -19,7 +19,7 @@ class PGDMSampler(PosteriorSampler, Generic[Condition_co]):
 
     This implementation is based on the paper "Pseudoinverse-Guided
     Diffusion Models for Inverse Problems" (Chung et al., 2023).
-    https://arxiv.org/pdf/2501.03030v1
+    https://jankautz.com/publications/PiGDM_ICLR23.pdf
     """
 
     def __call__(
@@ -38,7 +38,7 @@ class PGDMSampler(PosteriorSampler, Generic[Condition_co]):
 
         Args:
             inverse_problem: The inverse problem to solve. Crucially, its `operator`
-                must have a `pseudo_inverse` method.
+                must implement `apply_pseudo_inverse`.
             num_sampling_steps: Number of diffusion timesteps.
             num_reconstructions: Number of independent reconstructions.
             guidance_weight: Step size for the guidance term. Controls the strength
@@ -49,13 +49,21 @@ class PGDMSampler(PosteriorSampler, Generic[Condition_co]):
             Tensor containing reconstructed samples.
 
         Raises:
-            AttributeError: If the epsilon network or the operator is missing
-                required attributes (like `pseudo_inverse`).
+            NotImplementedError: If the operator does not implement
+                `apply_pseudo_inverse`.
         """
-        if not hasattr(inverse_problem.operator, "pseudo_inverse"):
-            raise AttributeError(
-                "The operator in the inverse_problem must have a 'pseudo_inverse' method for PGDM."
+        operator = inverse_problem.operator
+        try:
+            dummy_y = torch.zeros(
+                (1, *operator.y_shape),
+                device=next(operator.buffers(), torch.tensor(0)).device,
             )
+            operator.apply_pseudo_inverse(dummy_y)
+        except NotImplementedError as exc:
+            raise NotImplementedError(
+                "The operator in the inverse_problem must implement "
+                "'apply_pseudo_inverse' for PGDM."
+            ) from exc
 
         if args or kwargs:
             print(f"Warning: Unused args={args}, kwargs={kwargs} in PGDMSampler")
@@ -86,7 +94,7 @@ class PGDMSampler(PosteriorSampler, Generic[Condition_co]):
         )
 
         # Optional: A better initialization for PGDM is to start from the pseudo-inverse
-        # y0_inv = inverse_problem.operator.pseudo_inverse(inverse_problem.observation)
+        # y0_inv = inverse_problem.operator.apply_pseudo_inverse(inverse_problem.observation)
         # last_timestep = int(epsilon_net.timesteps[-1])
         # sample = epsilon_net.q_sample(y0_inv, last_timestep)
 
@@ -102,9 +110,9 @@ class PGDMSampler(PosteriorSampler, Generic[Condition_co]):
 
             # Calculate PGDM consistency loss
             with torch.enable_grad():  # Ensure grads are enabled for this part
-                y0_inv = inverse_problem.operator.pseudo_inverse(inverse_problem.observation)
-                x0_pred_fwd = inverse_problem.operator.forward(x0_pred)
-                x0_pred_inv = inverse_problem.operator.pseudo_inverse(x0_pred_fwd)
+                y0_inv = operator.apply_pseudo_inverse(inverse_problem.observation)
+                x0_pred_fwd = operator.forward(x0_pred)
+                x0_pred_inv = operator.apply_pseudo_inverse(x0_pred_fwd)
 
                 # We need the gradient w.r.t x_t, so we compute loss w.r.t. something differentiable
                 # that depends on x_t. Using x0_pred works perfectly.

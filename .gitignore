@@ -1,3 +1,7 @@
 /.idea
 /models/
-/.idea
+/.scratch/
+**/__pycache__/
+*.pyc
+/samplers.code-workspace
+/chat-*.txt
